@@ -158,3 +158,12 @@ class Castle:
         """
         lost = self.max_hp - self.total_hp()
         return lost * 100 >= LOSS_PERCENT * self.max_hp
+
+    def hp_before_falling(self):
+        """How much more HP must be lost for the castle to fall (0 once it has fallen).
+
+        900 for a new castle (60 % of 1500). The AI uses it to judge how close a castle is to falling.
+        """
+        hp_lost_when_fallen = (LOSS_PERCENT * self.max_hp + 99) // 100    # rounded up, whole HP
+        lost = self.max_hp - self.total_hp()
+        return max(0, hp_lost_when_fallen - lost)

@@ -267,8 +267,9 @@ class Engineer(Character):
     BLOCK_DAMAGE = 60
     SPECIAL_NAME = "Repair"
     SPECIAL_COOLDOWN = 4
-    SPECIAL_DESCRIPTION = "Restores up to 75 castle HP, most damaged blocks first."
-    REPAIR_POOL = 75                     # castle HP restored by one Repair, at most
+    SPECIAL_DESCRIPTION = "Restores up to 150 castle HP, most damaged blocks first."
+    REPAIR_POOL = 150                    # castle HP restored by one Repair, at most
+                                         # (75 until M3.2, see docs/M3.2_balance_report.md)
 
     def special_blocked_reason(self, team):
         """Repair also needs something to repair (a damaged block that still stands)."""
@@ -278,7 +279,7 @@ class Engineer(Character):
         return reason
 
     def use_special(self, team):
-        """Repair: up to 75 HP back for the team's castle. Nothing is fired."""
+        """Repair: up to REPAIR_POOL HP back for the team's castle. Nothing is fired."""
         restored = team.castle.repair(self.REPAIR_POOL)
         return f"{self.name} uses Repair: the castle regains {restored} HP.", None
 

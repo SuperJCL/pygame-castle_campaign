@@ -231,6 +231,122 @@ class DefendTest(unittest.TestCase):
         self.assertEqual(knight.hp, 140 - 14 - 28)
 
 
+class CastleGuardTest(unittest.TestCase):
+    """M3.2: while one of a team's characters is defending (Defend or Rally), enemy shots
+    do half damage to that team's castle blocks, rounded down. It ends with the Defend."""
+
+    def test_defend_guards_the_castle_until_the_team_next_turn_starts(self):
+        battle = combat([Knight, Archer], [Knight])
+        act(battle, 1, "defend")                                  # one defender is enough: the Archer
+        self.assertTrue(battle.castle_guarded("left"))
+        _, events = act(battle, 0, "attack", TOWER)               # right: 4 blocks x 50, halved to 25
+        explosion = events_of(events, "explosion")[0]
+        self.assertEqual((explosion["blocks_hit"], explosion["damage"], explosion["guarded"]),
+                         (4, 100, True))
+        self.assertEqual(battle.castles["left"].total_hp(), 1500 - 100)
+        self.assertFalse(battle.castle_guarded("left"))           # left's turn has started: guard over
+        pass_turn(battle)
+        _, events = act(battle, 0, "attack", TOWER)               # the same 4 blocks, full 50 each
+        explosion = events_of(events, "explosion")[0]
+        self.assertEqual((explosion["damage"], explosion["guarded"]), (200, False))
+        self.assertEqual(battle.castles["left"].total_hp(), 1500 - 300)
+
+    def test_only_the_defending_team_castle_is_guarded(self):
+        battle = combat([Knight], [Knight])
+        pass_turn(battle)                                         # left
+        act(battle, 0, "defend")                                  # right defends
+        self.assertEqual((battle.castle_guarded("left"), battle.castle_guarded("right")), (False, True))
+        _, events = act(battle, 0, "attack", TOWER)               # left hits the guarded right castle
+        self.assertEqual(events_of(events, "explosion")[0]["damage"], 100)
+        _, events = act(battle, 0, "attack", TOWER)               # right hits the unguarded left castle
+        self.assertEqual(events_of(events, "explosion")[0]["damage"], 200)
+
+    def test_rally_guards_the_castle_like_defend_and_also_ends_at_the_next_turn(self):
+        battle = combat([Knight, Archer], [Archer])
+        act(battle, 0, "special")                                 # Rally: the whole team defends
+        _, events = act(battle, 0, "attack", TOWER)               # right Archer: 4 x 50, halved
+        self.assertEqual(events_of(events, "explosion")[0]["damage"], 100)
+        pass_turn(battle)                                         # left (the Rally is over)
+        _, events = act(battle, 0, "attack", TOWER)
+        self.assertEqual(events_of(events, "explosion")[0]["damage"], 200)
+
+    def test_several_defenders_do_not_stack_the_guard(self):
+        battle = combat([Knight, Archer, Engineer], [Knight])
+        act(battle, 0, "special")                                 # Rally: all three defend
+        self.assertEqual(sum(c.is_defending for c in battle.teams["left"].characters), 3)
+        _, events = act(battle, 0, "attack", TOWER)
+        self.assertEqual(events_of(events, "explosion")[0]["damage"], 4 * 25)   # halved once, not 3 times
+
+    def test_guard_lasts_the_whole_enemy_turn_and_ends_as_the_defender_turn_starts(self):
+        for defender in ("left", "right"):
+            with self.subTest(defender=defender):
+                battle = combat([Knight], [Knight])
+                if defender == "right":
+                    pass_turn(battle)                             # left moves first
+                act(battle, 0, "defend")
+                attacker = battle.active_side
+                self.assertNotEqual(attacker, defender)
+                aim(battle, *TOWER)
+                battle.perform_action(0, "attack")
+                while battle.projectile is not None:              # every frame of the enemy shot
+                    self.assertEqual(battle.active_side, attacker)
+                    self.assertTrue(battle.castle_guarded(defender))
+                    battle.update()
+                self.assertEqual(events_of(battle.take_events(), "explosion")[0]["damage"], 100)
+                self.assertEqual(battle.active_side, defender)    # the defender's next turn has begun...
+                self.assertFalse(battle.castle_guarded(defender))  # ...so the guard is already over
+
+    def test_guarded_block_damage_is_halved_and_rounded_down(self):
+        # 4 tower blocks: Knight 50 -> 25, Engineer 60 -> 30, Power Shot 75 -> 37 (37.5 rounded down).
+        cases = ((Knight, "attack", 4 * 25), (Engineer, "attack", 4 * 30), (Archer, "special", 4 * 37))
+        for role, action, expected in cases:
+            with self.subTest(role=role.__name__, action=action):
+                battle = combat([Knight], [role])
+                act(battle, 0, "defend")
+                _, events = act(battle, 0, action, TOWER)
+                self.assertEqual(events_of(events, "explosion")[0]["damage"], expected)
+
+    def test_castle_guard_can_keep_a_castle_standing(self):
+        # Every block has lost 50 HP: 750 lost (50 %). A full Knight hit on the 4 tower blocks
+        # makes it 950 (63 %, fallen); a guarded hit makes it 850 (57 %, still standing).
+        for defends, winner in ((False, "right"), (True, None)):
+            with self.subTest(defends=defends):
+                battle = combat([Knight], [Knight])
+                for block in battle.castles["left"].blocks:
+                    block.take_damage(50)
+                if defends:
+                    act(battle, 0, "defend")
+                else:
+                    pass_turn(battle)
+                act(battle, 0, "attack", TOWER)
+                self.assertEqual(battle.winner, winner)
+
+    def test_the_guard_also_covers_the_shot_that_defeats_the_defender(self):
+        # NEAR_CASTLE lands on the ground between the left castle and slot 0, so its blast
+        # reaches the bottom-left block and the character in slot 0. (Found by trying aims
+        # with battle.py; angles 38-42 at power 70 all land there.)
+        near_castle = (40, 70)
+        battle = combat([Archer], [Knight])
+        archer = battle.teams["left"].characters[0]
+        archer.take_damage(89)                                    # 1 HP left
+        act(battle, 0, "defend")
+        _, events = act(battle, 0, "attack", near_castle)         # right Knight: (30-4)//2 = 13
+        explosion = events_of(events, "explosion")[0]
+        self.assertEqual(explosion["characters_hit"], [{"name": "Archer", "damage": 1, "defeated": True}])
+        self.assertEqual((explosion["blocks_hit"], explosion["damage"], explosion["guarded"]), (1, 25, True))
+        self.assertEqual(battle.winner, "right")
+
+    def test_the_m1_duel_has_no_castle_guard(self):
+        battle = Battle()
+        aim(battle, *TOWER)
+        battle.fire()
+        while battle.projectile is not None:
+            battle.update()
+        explosion = events_of(battle.take_events(), "explosion")[0]
+        self.assertEqual((explosion["damage"], explosion["guarded"]), (200, False))
+        self.assertFalse(battle.castle_guarded("right"))
+
+
 class SpecialTest(unittest.TestCase):
     def test_rally_makes_every_living_ally_defend_and_fires_nothing(self):
         battle = combat([Knight, Archer, Engineer], [Archer])
@@ -264,17 +380,20 @@ class SpecialTest(unittest.TestCase):
         act(battle, 0, "special", FRONT_CHARACTER)                # 60 halved = 30
         self.assertEqual(battle.teams["right"].characters[0].hp, 140 - 30)
 
-    def test_repair_restores_at_most_75_hp_and_never_a_destroyed_block(self):
+    def test_repair_restores_at_most_150_hp_and_never_a_destroyed_block(self):
         battle = combat([Engineer], [Knight])
         castle = battle.castles["left"]
-        low, mid, gone = castle.blocks[1], castle.blocks[2], castle.blocks[3]
+        lowest, low, mid, gone = castle.blocks[0], castle.blocks[1], castle.blocks[2], castle.blocks[3]
+        lowest.take_damage(80)                                    # 20 HP
         low.take_damage(60)                                       # 40 HP
         mid.take_damage(30)                                       # 70 HP
-        gone.take_damage(100)                                     # destroyed: 190 HP lost in total
+        gone.take_damage(100)                                     # destroyed: 270 HP lost in total
         accepted, events = act(battle, 0, "special")
         self.assertTrue(accepted)
-        self.assertEqual(castle.total_hp(), 1500 - 190 + 75)
-        self.assertEqual((low.hp, mid.hp, gone.hp), (100, 85, 0))
+        # 150 HP, most damaged first: +80 (20 -> 100), +60 (40 -> 100), the last 10 to the 70-HP block.
+        self.assertEqual(castle.total_hp(), 1500 - 270 + 150)
+        self.assertEqual((lowest.hp, low.hp, mid.hp, gone.hp), (100, 100, 80, 0))
+        self.assertTrue(all(block.hp <= block.max_hp for block in castle.blocks))
         self.assertIsNone(battle.projectile)
         self.assertEqual(battle.teams["left"].characters[0].special_cooldown, 4)
         self.assertEqual(battle.active_side, "right")

@@ -51,6 +51,10 @@ SLOT_X = {"left": (140, 95, 50), "right": (1140, 1185, 1230)}
 EXP_FOR_HIT = 10              # the shot damaged at least one enemy block or character
 EXP_FOR_DEFEAT = 20           # extra, for each enemy character the shot defeated
 EXP_FOR_SUPPORT_SPECIAL = 5   # Rally or Repair (a basic Defend earns nothing)
+# Castle Guard (M3.2): while one of a team's characters is defending (Defend or Rally),
+# enemy shots do this much less damage to each of that team's castle blocks, rounded
+# down (50 -> 25, 60 -> 30, 75 -> 37). It ends with the Defend, at the team's next turn.
+CASTLE_GUARD_PERCENT = 50
 
 
 def clamp(value, low, high):
@@ -276,6 +280,16 @@ class Battle:
                 self._finish_turn(actor, EXP_FOR_SUPPORT_SPECIAL)
         return True
 
+    def castle_guarded(self, side):
+        """True while one of `side`'s living characters is defending (Defend or Rally).
+
+        Enemy shots then do CASTLE_GUARD_PERCENT less damage to that side's castle
+        blocks. Always False in the M1 cannon duel, which has no characters.
+        """
+        if self.teams is None:
+            return False
+        return any(character.is_defending for character in self.teams[side].alive_characters())
+
     def why_not_allowed(self, actor_index, action):
         """None if the action may be performed now, otherwise the reason it can't.
 
@@ -378,8 +392,13 @@ class Battle:
             self._finish_turn(shooter, 0)
             return
 
-        blocks_hit, damage = self.castles[enemy].apply_blast(
-            x, y, BLAST_RADIUS, shot_damage.block_damage)
+        # Castle Guard is checked before anything is hit, so it also covers the shot
+        # that defeats the defending character.
+        guarded = self.castle_guarded(enemy)
+        block_damage = shot_damage.block_damage
+        if guarded:
+            block_damage = block_damage * (100 - CASTLE_GUARD_PERCENT) // 100
+        blocks_hit, damage = self.castles[enemy].apply_blast(x, y, BLAST_RADIUS, block_damage)
         characters_hit = []
         if shooter is not None:
             # Make the list of targets first, so each one is hit once even if it is defeated.
@@ -389,7 +408,7 @@ class Battle:
                                        "defeated": not target.is_alive()})
         self._events.append({"type": "explosion", "side": other_side(enemy), "kind": kind,
                              "x": x, "y": y, "blocks_hit": blocks_hit, "damage": damage,
-                             "characters_hit": characters_hit})
+                             "guarded": guarded, "characters_hit": characters_hit})
 
         exp = 0
         if blocks_hit > 0 or characters_hit:

@@ -262,9 +262,9 @@ class ActionButtonTest(MainTestCase):
         castle = self.game.battle.castles["left"]
         castle.blocks[0].take_damage(80)
         self.click(self.game.action_buttons["special"].rect)
-        self.assertEqual(castle.total_hp(), 1500 - 80 + 75)
+        self.assertEqual(castle.total_hp(), 1500)                      # only 80 HP were missing
         self.assertEqual(self.game.battle.active_side, "right")
-        self.assertIn("regains 75 HP", " ".join(self.game.log))
+        self.assertIn("regains 80 HP", " ".join(self.game.log))
 
     def test_power_shot_button_launches_a_shot(self):
         self.start([Archer], [Knight])
@@ -370,11 +370,26 @@ class AbilityPreflightTest(MainTestCase):
         self.assertEqual(castle.total_hp(), 1500 - 200)
         self.assertTrue(self.game.action_buttons["special"].enabled)   # now there is damage to repair
         self.act("special")                                    # right Engineer: Repair
-        self.assertEqual(castle.total_hp(), 1500 - 200 + 75)
-        self.assertEqual(sorted(b.hp for b in castle.blocks if b.hp < 100), [50, 50, 75])
-        self.assertEqual(int(castle.destruction_percent()), 8)    # HUD: 125 / 1500 lost
-        self.assertIn("regains 75 HP", " ".join(self.game.log))
+        self.assertEqual(castle.total_hp(), 1500 - 200 + 150)
+        self.assertEqual(sorted(b.hp for b in castle.blocks if b.hp < 100), [50])
+        self.assertEqual(int(castle.destruction_percent()), 3)    # HUD: 50 / 1500 lost
+        self.assertIn("regains 150 HP", " ".join(self.game.log))
         self.assertEqual(self.game.battle.active_side, "left")
+
+    def test_defend_also_guards_the_castle_and_the_log_says_so(self):
+        self.start([Knight], [Knight])
+        castle = self.game.battle.castles["left"]
+        self.act("defend")                                     # left Knight defends
+        self.act("attack", TOWER)                              # right: 4 blocks, 50 halved to 25
+        self.assertEqual(castle.total_hp(), 1500 - 100)
+        self.assertIn("Explosion: 4 castle blocks, 100 damage.", self.game.log)
+        self.assertIn("Castle Guard halved the damage to the castle.", self.game.log)
+        for line in self.game.log:                             # the log panel doesn't wrap lines
+            self.assertLessEqual(self.game.tiny_font.size(line)[0], main.WINDOW_WIDTH - 870)
+        self.act("attack", HARMLESS)                           # left passes: its guard is over
+        self.act("attack", TOWER)                              # full 50 on each block now
+        self.assertEqual(castle.total_hp(), 1500 - 300)
+        self.assertEqual(" ".join(self.game.log).count("Castle Guard"), 1)
 
     def test_cooldown_counts_down_at_round_starts_and_blocks_the_special_until_ready(self):
         self.start([Archer], [Knight])

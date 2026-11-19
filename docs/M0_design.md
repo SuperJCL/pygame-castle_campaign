@@ -1,9 +1,9 @@
 # Castle Siege — M0 Requirements and Architecture
 
-Status: **Revision 3 (M2.3), updated for M3.1.** This is the living design document. The game is
-implemented up to M3.1 (Player vs AI, plus two-player hot seat). Revision 3's final decisions,
-just below, override anything older in this document. The AI that was built differs from the
-plan in §6.3; see §14, "M3.1 notes".
+Status: **Revision 3 (M2.3), updated for M3.2.** This is the living design document. The game is
+implemented up to M3.2 (Player vs AI, two-player hot seat, and the M3.2 balance changes).
+Revision 3's final decisions and the M3.2 rule changes, just below, override anything older in
+this document. The AI that was built differs from the plan in §6.3; see §14, "M3.1 notes".
 
 ### Revision 3 — final decisions (made by the PM and the user in M2.3)
 - **Alternating turns are the final design. Simultaneous turns are cancelled.** The left team
@@ -22,6 +22,16 @@ plan in §6.3; see §14, "M3.1 notes".
 - **Victory:** defeating every enemy character wins. A 60 % destroyed enemy castle also wins (our
   extra rule), and it can be switched off (`castle_loss_enabled=False`) if the instructor requires
   elimination only.
+
+### M3.2 — rule changes (chosen with the balance benchmark; see docs/M3.2_balance_report.md)
+- **Castle Guard:** while one of a team's characters is defending (Defend or Rally), enemy shots
+  do half damage to that team's castle blocks, rounded down (50 → 25, 60 → 30, 75 → 37). It ends
+  with the Defend, at the team's next turn (`battle.CASTLE_GUARD_PERCENT = 50`).
+- **Engineer Repair:** up to **150** castle HP per use (was 75); cooldown 4, no revived blocks,
+  no block above 100 HP (`Engineer.REPAIR_POOL = 150`).
+- **Kept:** the 60 % castle threshold, character Defend (half damage, minimum 1), the cooldowns,
+  one action per team turn, the stats and the physics.
+- Human play-testing of these rules is still pending.
 
 Revision 2's original header: *draft for project-manager review; M0 design only.*
 
@@ -204,10 +214,10 @@ deviation (§10, C7).
 | # | Question | Rule | Why |
 |---|---|---|---|
 | 1 | Both castles destroyed in the same round? | **Draw.** More generally, if both teams meet *any* loss condition at the same ROUND_END, it is a Draw. In alternating mode this can't happen, because each turn is checked on its own; only the round-30 tie-break can end in a Draw there. | Simultaneous resolution has no "first" shot; the only fair answer is a Draw. |
-| 2 | What does Defend protect? | **Characters only, never castles.** Defend: the acting character takes 50 % damage until its team's next turn starts. Knight Rally: every living ally, **including the Knight itself**. | If Defend protected the castle, a team could stall the castle win forever. |
+| 2 | What does Defend protect? | Defend: the acting character takes 50 % damage until its team's next turn starts. Knight Rally: every living ally, **including the Knight itself**. *Since M3.2 (Castle Guard):* while any of its characters is defending, the team's castle blocks also take half damage from enemy shots, rounded down. (Until M3.2: characters only, never castles.) | The old worry was that a team could stall the castle win by defending. Castle Guard halves only one enemy action and costs the team its own shot, so it can't: in 10,560 benchmark matches none reached the round cap (docs/M3.2_balance_report.md). |
 | 3 | How do explosions affect characters and blocks? | One explosion per shot, when the shot enters an enemy character's rectangle or an enemy block's rectangle, or reaches the ground. Every **enemy** character and every **enemy** block whose centre is within **50 px** of the impact point is damaged once (§4.1, §4.3). No friendly fire: shots pass through their own team's castle and characters. Projectiles never collide with each other. Defeated characters are removed from the field: they no longer block or trigger shots. In M1 there are only blocks. | One rule covers every target, so it's easy to explain and test. |
 | 4 | May the same character act every round? | **Yes.** Any living character may act in any round. | Simplest rule, and safe for the course's "AI defends below 50 % HP" requirement. The other characters still matter: their specials have separate cooldowns, they add HP, and they are targets. Rejected: "no acting two rounds in a row", because it can stop the AI from defending its weakest character. |
-| 5 | Repair: damaged vs destroyed blocks? | Damaged blocks that still stand regain HP, up to their maximum. **Destroyed blocks (0 HP) never come back.** Pool: 75 HP per use, most damaged block first (§3.4). | Gaps in the wall stay open, so repairs can't undo the attacker's progress completely. |
+| 5 | Repair: damaged vs destroyed blocks? | Damaged blocks that still stand regain HP, up to their maximum. **Destroyed blocks (0 HP) never come back.** Pool: 150 HP per use (75 until M3.2), most damaged block first (§3.4). | Gaps in the wall stay open, so repairs can't undo the attacker's progress completely. |
 | 6 | How are cooldowns counted? | Each character has its own counter. Using the special sets it to `SPECIAL_COOLDOWN`. **Every** ROUND_START lowers every counter by 1 (minimum 0), even for characters that did not act. The special is usable when the counter is 0. **Used in round r → usable again in round r + cooldown.** | Counting happens in one place, so there are no off-by-one special cases. |
 | 7 | How does the AI decide without seeing the hidden plan? | The AI submits **first**, at the start of PLANNING, before the human chooses. It reads only public information: positions, HP, levels, cooldowns, castle blocks and the log of earlier rounds. `Battle` keeps submitted plans in a private attribute (`_plans`) and reveals them only in RESOLVE_INSTANT. The planned angle and power are **not** applied to the `Cannon` until then, so the enemy barrel on screen keeps its last fired angle and can't give the plan away. The human's own draft aim is held by `main.py` and drawn only on the human's own cannon. Tests check that (a) with a fixed random seed, the AI's plan is identical whether or not the human's plan has been submitted, and (b) submitting a plan does not change the cannon's angle or power. | The order of play guarantees it, and the tests prove it. In PvP the same rule hides Player 1's aim from Player 2. |
 | 8 | A team loses a character (or its castle) while its shot is in the air? | The shot still lands and still deals damage. | Both shots were fired together. Rebound deletes in-flight shots instead (review §3.3), which would break simultaneity. |
@@ -255,7 +265,7 @@ Class-level constants, overridden by each archetype: `BASE_HP`, `BASE_ATK`, `BAS
 | ATK | 30 | 40 | 34 |
 | DEF | 12 | 4 | 8 |
 | Block damage multiplier | 1.0 | 0.75 (arrows are weak against stone) | 1.5 |
-| Special | **Rally:** every living ally, the Knight included, defends until the team's next turn. Does not fire. | **Power Shot:** an aimed cannon shot with ×1.5 damage that ignores DEF. | **Repair:** restores up to 75 HP to the castle (§3.4). Does not fire. |
+| Special | **Rally:** every living ally, the Knight included, defends until the team's next turn. Does not fire. | **Power Shot:** an aimed cannon shot with ×1.5 damage that ignores DEF. | **Repair:** restores up to 150 HP to the castle (§3.4; 75 until M3.2). Does not fire. |
 | Special cooldown | 4 | 3 | 4 |
 | Special needs aim? | no | yes | no |
 
@@ -266,19 +276,21 @@ A special used in round *r* can be used again in round *r + cooldown*. Every spe
 ready. Details and an example: §2.4 rule 6 and §2.5.
 
 ### 3.4 Engineer Repair (rebalanced)
-**Rule:** Repair restores **at most 75 HP in total** (5 % of the castle's 1500 HP). The HP goes
-to damaged blocks that are still standing, **most damaged first** (ties: leftmost, then top
-first). No block goes above 100 HP. Destroyed blocks stay destroyed. Any HP left over is lost.
-Cooldown 4.
+**Rule:** Repair restores **at most 150 HP in total** (10 % of the castle's 1500 HP; it was 75
+until M3.2). The HP goes to damaged blocks that are still standing, **most damaged first** (ties:
+leftmost, then top first). No block goes above 100 HP. Destroyed blocks stay destroyed. Any HP
+left over is lost. Cooldown 4.
 
 ```
-pool = 75
+pool = 150          # Engineer.REPAIR_POOL (75 until M3.2)
 for block in surviving blocks, sorted by hp (lowest first):
     gain = min(pool, block.max_hp - block.hp)
     block.hp += gain ;  pool -= gain
 ```
-Examples: block HP `[100, 40, 70, 0]` → `[100, 100, 85, 0]` (60 + 15 = 75 used; the destroyed
-block is untouched). Block HP `[90, 95]` → `[100, 100]` (15 used, 60 lost).
+Examples with the old 75 pool (the unit tests still check them through `Castle.repair(75)`):
+block HP `[100, 40, 70, 0]` → `[100, 100, 85, 0]` (60 + 15 = 75 used; the destroyed block is
+untouched). Block HP `[90, 95]` → `[100, 100]` (15 used, 60 lost). With 150: `[20, 40, 70, 0]` →
+`[100, 100, 80, 0]` (80 + 60 + 10 = 150).
 
 **Trade-off:**
 - *Old rule:* +25 HP for every surviving block, up to 375 HP (25 % of the castle) per use. One
@@ -291,6 +303,10 @@ block is untouched). Block HP `[90, 95]` → `[100, 100]` (15 used, 60 lost).
   (§2.4 rule 9).
 - *Cost:* the Engineer's special is weaker. If playtests show nobody uses it, raise the pool
   (one constant), not the per-block amount.
+- *M3.2:* the benchmark showed exactly that. At 75, repairing instead of attacking cost 22 ± 8
+  points of win rate on Hard. The pool was raised to 150: at most 10 destruction points back per
+  use (≤ 2.5 per round), still less than the 3–4 enemy shots of a cooldown period. Repairing is
+  now about even with attacking at the moment it is possible (docs/M3.2_balance_report.md).
 
 ### 3.5 EXP and levels (revised)
 Only the character that acted earns EXP, and only if it is **still alive at the end of the round**
@@ -341,7 +357,9 @@ Examples (Level 1):
 - **Defend** (any character): the acting character takes 50 % damage (§4.1) until its team's
   next turn. It does not attack this round.
 - **Rally** (Knight special): every living ally is defending until the team's next turn.
-- Defend never reduces castle damage (§2.4 rule 2).
+- *Since M3.2:* while any character of a team is defending, enemy shots do half damage to that
+  team's castle blocks, rounded down (**Castle Guard**, §2.4 rule 2, §4.3). Before M3.2, Defend
+  never reduced castle damage.
 
 ### 4.3 Damage to castle blocks (one explosion)
 Each shot deals a fixed amount to every enemy block in the blast (since M2.2; it no longer
@@ -355,7 +373,9 @@ depends on ATK or level):
 | Engineer Attack | 60 |
 | Archer Power Shot | 75 |
 
-Blocks have no DEF and cannot defend. (Revision 2 used `int(atk × multiplier ×
+Blocks have no DEF. *Since M3.2,* each value is halved and rounded down (25 / 25 / 30 / 37) while
+the target team has a defending character (Castle Guard, `CASTLE_GUARD_PERCENT`); never in the
+M1 duel. (Revision 2 used `int(atk × multiplier ×
 BLOCK_DAMAGE_MULT)`, which gave a Knight 30 per block. That brought back the slow pacing
 M1.1 fixed, so M2.2 replaced it with these values.)
 
@@ -667,6 +687,7 @@ of the PM's list of important requirements.
 | Castle damage, destruction %, 60 % loss | `Castle.apply_blast`, `destruction_percent`, `has_fallen` | M1 | test_castle |
 | Attack action | `ActionPlan("attack")`, `Battle.begin_resolution` | M2 | test_battle |
 | Defend −50 % damage | `calculate_damage(... defending)`, `Character.defend` | M2 | test_characters (exact halving, minimum 1, lasts until next turn) |
+| Castle Guard (M3.2) | `Battle.castle_guarded`, `CASTLE_GUARD_PERCENT`, `Battle._end_shot` | M3.2 | test_combat `CastleGuardTest` (Defend and Rally, expiry, rounding, only the defending team, can save a castle, covers the defender's last shot, not in the M1 duel); test_main (log line) |
 | Special ability + cooldown | `use_special` overrides, `start_cooldown` / `tick_cooldown` | M2 | test_characters (round r → r + cooldown), test_battle |
 | HP, ATK, DEF, EXP, Level | `Character` attributes, `gain_exp` | M2 | test_characters (thresholds, stat gains, dead earn nothing) |
 | OOP inheritance and encapsulation | `Character` → `Knight / Archer / Engineer`; private state | M2 | code review, class diagram (M5) |
@@ -674,7 +695,7 @@ of the PM's list of important requirements.
 | HP bars, action buttons, combat log, result screen | `Game.draw_*`, `Button`, `Battle.log`, `RESULT` state | M2 (basic), M4 (polish) | manual checklist; test_battle (log entries) |
 | Alternating turns (simultaneous resolution cancelled in M2.3) | `Battle._finish_turn`, `_start_round`, `_start_turn` | M2.2 | test_combat (turn order, cooldowns once per round, Defend covers exactly one enemy turn) |
 | Elimination victory, castle victory, Draw, tie-break | `Team.has_lost`, `end_round`, `castle_loss_enabled`, §4.7 | M2 | test_battle (both values of `castle_loss_enabled`) |
-| Engineer Repair (capped) | `Castle.repair` | M2 | test_castle (pool examples of §3.4) |
+| Engineer Repair (capped) | `Castle.repair`, `Block.restore`, `Engineer.REPAIR_POOL` (150 since M3.2) | M2, M3.2 | test_castle (pool examples of §3.4, no revival, no overheal); test_combat and test_main (150 through the real battle and buttons) |
 | Enemy AI, defensive preference below 50 % HP | `AIController.wants_to_defend`, `defensive_plan` | M3.1 | test_ai (seeded rate check: below half HP vs not; never two defensive turns in a row) |
 | AI difficulty Easy / Normal / Hard | `ai.DIFFICULTY_SETTINGS` | M3.1 | test_ai (seeded: Hard hits more often than Easy; whole matches end at every size and level) |
 | Player vs AI mode | `main.Game.ai`, `update_ai`, mode and difficulty buttons | M3.1 | test_main (PvAI selection and battle), scripted and real-input runs; human playtest pending |
@@ -696,14 +717,15 @@ of the PM's list of important requirements.
 | **C2** | Elimination victory | **Partly.** Elimination is kept. We **add** the 60 % castle loss and a Draw; the course mentions only win and lose. | The castle win gives aiming a target that isn't a character. | Set `CASTLE_LOSS_ENABLED = False`. In simultaneous mode a Draw still happens if both teams are eliminated in the same round; in alternating mode only the round-30 tie-break (C7) can produce one. |
 | **C3** | Attacks can miss | **Unknown.** The course may assume every Attack deals damage. | Misses are what make artillery a skill. | Add an assist mode (for example, Easy-only aim help). Not planned. |
 | **C4** | "AI defends below 50 % HP" with a team | **Interpretation.** "HP" is ambiguous with several characters, and our defence is probabilistic (50 / 70 / 85 %). | We use the weakest living AI character. | Set Defend chance to 100 % (one table row). |
-| **C5** | "Defend reduces damage by 50 %" | **Interpretation.** Applied after DEF, minimum 1, to the defending character only; never to castles. | — | Moving the halving before DEF is a one-line change. |
+| **C5** | "Defend reduces damage by 50 %" | **Interpretation.** Applied after DEF, minimum 1, to the defending character. *Since M3.2,* the team's castle blocks also take half damage while it defends (Castle Guard, our addition). | — | Moving the halving before DEF is a one-line change; `CASTLE_GUARD_PERCENT = 0` turns Castle Guard off. |
 | **C6** | Characters "attack" | **Interpretation.** Characters attack *through* their team's cannon; the actor's stats set the damage. | One launch point per side (PM request). | Fire from the actor's slot instead (the Rev 1 design). Needs re-tuning. |
 | **C7** | Round limit | **Addition.** The course doesn't mention one. The match ends after round 30 with the §4.7 tie-break, which can be a Draw. | It guarantees that every match ends, including AI-vs-AI test matches. | Raise `ROUND_LIMIT`. Removing it isn't recommended. |
 
 ### 10.2 Design questions now decided (the PM may still override)
 - **A1 Fewer than 3 characters:** allowed (1–3, as the course says). The AI matches the player's
   team size. No compensation bonus.
-- **A2 Does Defend protect the castle?** No (§2.4 rule 2).
+- **A2 Does Defend protect the castle?** Partly, since M3.2: Castle Guard halves block damage
+  until the team's next turn (§2.4 rule 2). Before M3.2: no.
 - **A3 Duplicate archetypes in a team?** Not allowed.
 - **A4 May the same character act every round?** Yes (§2.4 rule 4).
 - **A5 EXP and levels across matches:** reset every match. Carrying them over ("campaign") is out of scope.
@@ -718,6 +740,9 @@ of the PM's list of important requirements.
   1v1 character hit rate Easy 23 %, Normal 46 %, Hard 66 %; 3v3 46 / 67 / 85 %. Hard beat Easy in
   67 of 72 AI-vs-AI matches. AI-vs-AI matches average only 4.8–7.7 rounds, because castle victory
   comes quickly (see docs/M3.1_balance_analysis.md), so the 8–15-round target isn't met.*
+  *M3.2 measured (castle loss on, existing AI mirrors): 6–7.5 rounds on Normal and 4.7–5.3 on
+  Hard with the new rules (+0.85 / +0.32 rounds). The target is still not met; a side moving
+  first wins 59–66 % of mirror matches (docs/M3.2_balance_report.md).*
 - **R3 `main.py` grows too large.** If it passes about 600 lines, split the drawing helpers into
   `ui.py` (a justified 6th module). *`main.py` is 862 lines after M3.1; the split is still a PM
   decision.*
@@ -729,7 +754,8 @@ of the PM's list of important requirements.
 - **R6 Hot-seat fairness (PvP).** *No longer applies: alternating turns hide nothing.* Original
   text: the HANDOVER screen and the "cannons move only at resolution"
   rule (§2.4 rule 7) must hide Player 1's angle and power. A manual checklist item verifies it.
-- **R7 Balance.** All numbers are first guesses. Tune constants, not code.
+- **R7 Balance.** All numbers are first guesses. Tune constants, not code. *M3.2 tuned Defend
+  (Castle Guard) and Repair (150) with a seeded benchmark; human play-testing is still pending.*
 - **R8 Late instructor answers on C1/C2.** Mitigated by the §2.3 switches, built in M2.
 - **R9 Scope creep from the reference project.** Power-ups, bouncing shots and neural AI are
   explicitly rejected (review §5).
@@ -826,8 +852,11 @@ open (see M3). The original plan follows.
   Easy / Normal / Hard table; Player vs AI as the default mode on the selection screen (mode and
   difficulty buttons; the computer builds a legal RIGHT team of the same size); a preflight of
   the M2.3 abilities; a Defend / Repair balance analysis (analysis only).
-- **Still open in M3:** the round limit and tie-break (§4.7); any balance changes the PM approves
-  from `docs/M3.1_balance_analysis.md` (proposed for M3.2). The PM defines M3.2 and M3.3.
+- **M3.2 (done, awaiting PM review and human playtesting):** a reproducible balance benchmark
+  (`scripts/balance_benchmark.py`); Castle Guard and Repair 150 adopted; 60 % kept
+  (`docs/M3.2_balance_report.md`).
+- **Still open in M3:** the round limit and tie-break (§4.7); the first-move advantage
+  (59–66 % in AI mirror matches). The PM defines M3.3.
 
 **Updated in M2.3.**
 - **Required:** Player vs AI.
@@ -1298,3 +1327,55 @@ No engine module (`battle.py`, `castle.py`, `characters.py`) changed in M3.1.
     mouse move. The driver was fixed; the game was not changed.
 
 This is still not human gameplay acceptance.
+
+### M3.2 notes (gameplay balance)
+**Brief (PM, M3.2):** make Defend and Engineer Repair strategically useful without redesigning the
+game. The allowed changes were Castle Guard, a Repair amount of 75–150 and a castle threshold of
+60–70 %, each only with convincing evidence. No new attack mechanics, counterattacks, extra
+actions or rebuilt blocks.
+
+**Benchmark** (`scripts/balance_benchmark.py`, no project file changed while it runs):
+- seeded AI-vs-AI matches with the real `Battle` and `AIController`;
+- four strategies (aggressive, the shipped AI, defensive, repair-aware) and eight rule variants;
+- mirrored rosters only, sides swapped, the same seeds in every variant (paired comparisons), a
+  40-round cap;
+- a decision-point experiment: a match is copied at the moment a Defend or Repair is possible,
+  and both choices are played to the end.
+
+There were 10,560 matches on Normal and Hard, plus an Easy check. Method, results and
+uncertainty are in `docs/M3.2_balance_report.md`; the raw tables are in
+`docs/M3.2_benchmark_results*.md`.
+
+**Result:**
+- **Castle Guard** raised a defend-when-threatened strategy by +13 ± 6 (Normal) and +4 ± 3 (Hard)
+  points. 84–92 % of defensive actions now prevent castle damage.
+- **Repair 150** made repairing about even with attacking at the moment it is possible. At 75 it
+  cost 22 ± 8 points on Hard.
+- Together they add 0.85 / 0.32 rounds. No match stalled, and no AI action was refused.
+- **60 % kept:** 70 % only lengthened matches.
+- The AI was not changed: it plans on copies of the battle with the real rules, so it adapts by
+  itself.
+
+**Code:**
+- `battle.py`: `CASTLE_GUARD_PERCENT`, `Battle.castle_guarded`, and the guard in `_end_shot`;
+  the explosion event gets `"guarded"`.
+- `characters.py`: `REPAIR_POOL = 150`.
+- `castle.py`: `Castle.hp_before_falling` (used by the AI instead of its own 60 % arithmetic).
+- `main.py`: after a guarded explosion the combat log adds "Castle Guard halved the damage to the
+  castle."
+
+**Verification:**
+- **Tests:** 207 in total. With Pygame, all 207 pass; without it, 154 pass and the 53 in
+  `test_main.py` are skipped. New Castle Guard tests are in `CastleGuardTest`: Defend, Rally,
+  no stacking, the exact turn boundary, rounding, the defender's last shot, the M1 duel. The
+  Repair tests moved to 150.
+- **Injected defects:** 19 rule defects were injected; 18 were caught. The remaining one is
+  equivalent: `Castle.repair` and `Block.restore` each refuse destroyed blocks, so removing only
+  one of the two checks changes nothing.
+- **M1 duel:** 60 seeded duels gave the same events with the old and the new code; the scripted
+  duel drive still passes 15 / 15 checks.
+- **Benchmark:** the Normal/Hard run was reproduced record for record by a second run of the
+  committed script.
+
+This is not human gameplay acceptance.
+

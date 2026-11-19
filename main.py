@@ -109,6 +109,8 @@ def describe_event(event):
             plural = "s" if event["blocks_hit"] != 1 else ""
             lines.append(f"Explosion: {event['blocks_hit']} castle block{plural}, "
                          f"{event['damage']} damage.")
+            if event.get("guarded"):
+                lines.append("Castle Guard halved the damage to the castle.")
         target_side = other_side(event["side"]).upper()
         for hit in event["characters_hit"]:
             ending = " and is defeated!" if hit["defeated"] else "."

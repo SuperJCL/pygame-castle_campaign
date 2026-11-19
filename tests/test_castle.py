@@ -41,6 +41,15 @@ class BlockTest(unittest.TestCase):
         self.assertEqual(block.hp, 0)
         self.assertTrue(block.is_destroyed())
 
+    def test_restore_heals_up_to_max_hp_but_never_a_destroyed_block(self):
+        block = Block(0, 0)
+        block.take_damage(30)
+        self.assertEqual(block.restore(150), 30)       # only 30 HP were missing
+        self.assertEqual(block.hp, 100)
+        block.take_damage(100)
+        self.assertEqual(block.restore(150), 0)        # destroyed blocks stay destroyed
+        self.assertTrue(block.is_destroyed())
+
     def test_contains_uses_the_block_rectangle(self):
         block = Block(100, 200)            # covers x 100..131, y 200..231
         self.assertTrue(block.contains(100, 200))
@@ -146,6 +155,17 @@ class DestructionTest(unittest.TestCase):
         self.assertFalse(castle.has_fallen())
         blocks[8].take_damage(1)                    # 900 damage = 60 %
         self.assertEqual(castle.destruction_percent(), 60.0)
+        self.assertTrue(castle.has_fallen())
+
+    def test_hp_before_falling_is_what_the_castle_can_still_lose(self):
+        castle = Castle("left")
+        self.assertEqual(castle.hp_before_falling(), 900)          # 60 % of 1500
+        castle.blocks[0].take_damage(100)
+        castle.blocks[1].take_damage(30)
+        self.assertEqual(castle.hp_before_falling(), 900 - 130)
+        for block in castle.blocks[2:10]:
+            block.take_damage(100)                                  # 800 more: 930 lost
+        self.assertEqual(castle.hp_before_falling(), 0)             # fallen: nothing left to lose
         self.assertTrue(castle.has_fallen())
 
 

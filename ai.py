@@ -21,7 +21,6 @@ import copy
 import random
 
 from battle import FIELD_WIDTH, MAX_ANGLE, MAX_POWER, MAX_STEPS, MIN_ANGLE, MIN_POWER, clamp, other_side
-from castle import LOSS_PERCENT
 from characters import ARCHETYPES, Archer, Engineer, Knight
 
 # How each difficulty plays. All of them follow exactly the same game rules.
@@ -93,11 +92,6 @@ def team_hp(team):
     return sum(character.hp for character in team.characters)
 
 
-def hp_before_falling(castle):
-    """How much more HP the castle can lose before it falls (at 60 % destruction)."""
-    return castle.total_hp() - castle.max_hp * (100 - LOSS_PERCENT) / 100
-
-
 def progress(before, after, side):
     """How much closer `side` is to winning in `after` than in `before` (0 = no progress).
 
@@ -116,9 +110,9 @@ def progress(before, after, side):
     score += DEFEAT_BONUS * defeated
     if before.castle_loss_enabled:
         damage = before.castles[enemy].total_hp() - after.castles[enemy].total_hp()
-        score += min(1.0, damage / max(1, hp_before_falling(before.castles[enemy])))
+        score += min(1.0, damage / max(1, before.castles[enemy].hp_before_falling()))
         repaired = after.castles[side].total_hp() - before.castles[side].total_hp()
-        score += min(1.0, repaired / max(1, hp_before_falling(before.castles[side])))
+        score += min(1.0, repaired / max(1, before.castles[side].hp_before_falling()))
     if after.winner == side:
         score += WIN_BONUS
     return score

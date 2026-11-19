@@ -255,11 +255,17 @@ class SpecialAbilityTest(unittest.TestCase):
         engineer = Engineer("E", "left")
         team = make_team(engineer)
         team.castle.blocks[0].take_damage(60)
-        team.castle.blocks[1].take_damage(30)          # 90 HP missing
+        team.castle.blocks[1].take_damage(30)
+        team.castle.blocks[2].take_damage(90)          # 180 HP missing, more than one Repair
         message, shot = engineer.use_special(team)
         self.assertIn("Repair", message)
+        self.assertIn("regains 150 HP", message)
         self.assertIsNone(shot)
-        self.assertEqual(team.castle.total_hp(), 1500 - 90 + 75)
+        self.assertEqual(team.castle.total_hp(), 1500 - 180 + 150)
+
+    def test_engineer_repair_text_shows_the_real_amount(self):
+        self.assertEqual(Engineer.REPAIR_POOL, 150)
+        self.assertIn("150", Engineer.SPECIAL_DESCRIPTION)     # shown on the team-selection cards
 
     def test_every_role_overrides_use_special(self):
         for role in (Knight, Archer, Engineer):

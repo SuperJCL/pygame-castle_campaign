@@ -59,7 +59,8 @@ In VS Code you can also pick the `.venv` interpreter (**Python: Select Interpret
    - **Aim** with the arrow keys (the orange arrow; longer means more power).
    - **Act:**
      - **ATTACK** (or **SPACE**) fires the cannon with that aim.
-     - **DEFEND** halves the damage that character takes until your next turn.
+     - **DEFEND** halves the damage that character takes until your next turn, and also halves
+       the damage enemy shots do to your castle blocks (**Castle Guard**).
      - **SPECIAL** uses its ability. A greyed-out button can't be used right now, and the panel
        says why.
 
@@ -99,12 +100,19 @@ to switch the keyboard to English first.
   - **Characters** take ATK − DEF damage (at least 1), or half that if they are defending.
   - **Blocks** take the attacker's castle damage: Knight 50, Archer 50, Engineer 60. Blocks start
     with 100 HP; damaged blocks get darker, and destroyed blocks disappear.
+- **Castle Guard:** while one of a team's characters is defending (Defend or Rally), enemy shots
+  do half damage to that team's castle blocks, rounded down (50 → 25, 60 → 30, Power Shot 75 → 37).
+  It ends with the Defend, when that team's next turn starts, so it covers one enemy action. The
+  combat log then says "Castle Guard halved the damage to the castle." Added in M3.2 so that
+  Defend can protect the castle.
 - **Specials:**
-  - **Knight – Rally:** all living allies defend until your next turn. Cooldown 4 rounds.
+  - **Knight – Rally:** all living allies defend until your next turn (so the castle is guarded
+    too). Cooldown 4 rounds.
   - **Archer – Power Shot:** an aimed shot doing ATK × 1.5 damage, ignoring DEF, and 75 per
     block. Cooldown 3.
-  - **Engineer – Repair:** up to 75 castle HP, most damaged blocks first; destroyed blocks stay
-    destroyed. Only possible when a block is damaged. Cooldown 4.
+  - **Engineer – Repair:** up to 150 castle HP (75 before M3.2), most damaged blocks first; no
+    block goes above 100 HP and destroyed blocks stay destroyed. Only possible when a block is
+    damaged. Cooldown 4.
 
   A special used in round *r* is ready again in round *r + cooldown*. Each character shows
   "ready" or "wait N" under its feet.
@@ -114,6 +122,9 @@ to switch the keyboard to English first.
   rule; it can be switched off for elimination-only play with `Battle(castle_loss_enabled=False)`).
 - **Damage formula:** deterministic, so tests can check exact numbers. The instructor's
   reference formula adds a random −5 to +10.
+- **Balance (M3.2):** Castle Guard and Repair 150 were chosen with a seeded AI-vs-AI benchmark
+  (`scripts/balance_benchmark.py`); see `docs/M3.2_balance_report.md`. Not yet confirmed by
+  human play-testing.
 
 ## The computer opponent (`ai.py`)
 - It plays by the same rules as you: it can only act through the same `Battle.perform_action()`
@@ -153,8 +164,11 @@ python -m unittest discover tests
 | `castle.py` | `Block` and `Castle` classes: castle layout, damage, repair and destruction percentage |
 | `characters.py` | `Character` base class with `Knight`, `Archer`, `Engineer`: HP/ATK/DEF, damage, defend, cooldowns, EXP, levels and each role's special ability |
 | `tests/` | `unittest` tests for `castle.py`, `battle.py` (M1 duel), team combat (`test_combat.py`), `characters.py`, `ai.py` and `main.py` |
+| `scripts/balance_benchmark.py` | M3.2 balance benchmark: seeded AI-vs-AI matches under several rule variants (not part of the game; run it from the project folder) |
 | `docs/M0_design.md` | Design: rules, architecture, roadmap (Revision 3 decisions at the top) |
-| `docs/M3.1_balance_analysis.md` | Analysis of Defend and Repair under the current rules (recommendations only, nothing changed) |
+| `docs/M3.1_balance_analysis.md` | M3.1 analysis of Defend and Repair (recommendations only, nothing changed) |
+| `docs/M3.2_balance_report.md` | M3.2 balance experiment: method, results, the rule changes made and their limits |
+| `docs/M3.2_benchmark_results.md`, `docs/M3.2_benchmark_results_easy.md` | The benchmark's generated result tables |
 | `docs/Rebound_reference_review.md` | Review of a reference project (ideas only) |
 
 ## References

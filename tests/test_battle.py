@@ -123,13 +123,27 @@ class ShotTest(unittest.TestCase):
     def test_shot_into_the_tower_damages_the_blocks_around_the_impact(self):
         # Independent simulation: 45 deg, power 64 hits the tower near (893, 429).
         # Block centres within 50 px of that point: (904,416), (936,416), (904,448), (936,448).
+        # 4 blocks x 50 damage = 200.
         battle = Battle()
         explosion = only_event(play_shot(battle, 45, 64), "explosion")
         self.assertEqual(explosion["kind"], "block")
         self.assertTrue(885 <= explosion["x"] <= 900 and 420 <= explosion["y"] <= 440, explosion)
-        self.assertEqual((explosion["blocks_hit"], explosion["damage"]), (4, 120))
-        self.assertEqual(battle.castles["right"].total_hp(), 1500 - 120)
+        self.assertEqual((explosion["blocks_hit"], explosion["damage"]), (4, 200))
+        self.assertEqual(battle.castles["right"].total_hp(), 1500 - 200)
         self.assertEqual(battle.castles["left"].total_hp(), 1500)
+
+    def test_two_direct_hits_destroy_the_blocks_they_cover(self):
+        # Each 45/64 shot hits the same 4 tower blocks for 50: 100 -> 50 -> 0 HP.
+        battle = Battle()
+        play_shot(battle, 45, 64)                 # left: the 4 blocks drop to 50 HP
+        play_shot(battle, 80, 10)                 # right: lands on its own castle, harmless
+        play_shot(battle, 45, 64)                 # left again: the 4 blocks are destroyed
+        castle = battle.castles["right"]
+        alive = {(b.x, b.y) for b in castle.alive_blocks()}
+        for gone in ((888, 400), (920, 400), (888, 432), (920, 432)):
+            self.assertNotIn(gone, alive)
+        self.assertEqual(len(alive), 11)
+        self.assertAlmostEqual(castle.destruction_percent(), 400 / 1500 * 100)
 
     def test_ground_explosion_next_to_the_castle_damages_the_front_block(self):
         # Power 56 lands on the ground at x ~ 868: 39 px from the front block's centre (904, 544).
@@ -137,7 +151,7 @@ class ShotTest(unittest.TestCase):
         explosion = only_event(play_shot(battle, 45, 56), "explosion")
         self.assertEqual(explosion["kind"], "ground")
         self.assertEqual(explosion["y"], GROUND_Y)
-        self.assertEqual((explosion["blocks_hit"], explosion["damage"]), (1, 30))
+        self.assertEqual((explosion["blocks_hit"], explosion["damage"]), (1, 50))
         damaged = [(b.x, b.y) for b in battle.castles["right"].blocks if b.hp < 100]
         self.assertEqual(damaged, [(888, 528)])
 
@@ -245,7 +259,7 @@ class VictoryTest(unittest.TestCase):
         battle = Battle()
         for block in battle.castles["right"].blocks:
             block.take_damage(58)                 # 870 damage = 58 %, no block destroyed
-        events = play_shot(battle, 45, 64)        # +120 damage -> 990 = 66 %
+        events = play_shot(battle, 45, 64)        # 4 blocks x 42 HP left = +168 -> 1038 = 69 %
         self.assertEqual(only_event(events, "game_over")["winner"], "left")
         self.assertEqual(battle.winner, "left")
         self.assertTrue(battle.is_over())
@@ -256,8 +270,8 @@ class VictoryTest(unittest.TestCase):
     def test_game_continues_below_60_percent(self):
         battle = Battle()
         for block in battle.castles["right"].blocks:
-            block.take_damage(50)                 # 750 damage = 50 %
-        events = play_shot(battle, 45, 64)        # +120 damage -> 870 = 58 %
+            block.take_damage(40)                 # 600 damage = 40 %
+        events = play_shot(battle, 45, 64)        # 4 blocks x 50 = +200 -> 800 = 53 %
         self.assertIsNone(battle.winner)
         self.assertFalse([e for e in events if e["type"] == "game_over"])
         self.assertEqual(battle.active_side, "right")
@@ -300,6 +314,19 @@ class RestartTest(unittest.TestCase):
             self.assertEqual(battle.castles[side].total_hp(), 1500)
             self.assertEqual(battle.cannons[side].angle, fresh.cannons[side].angle)
             self.assertEqual(battle.cannons[side].power, fresh.cannons[side].power)
+        self.assertTrue(battle.fire())
+
+    def test_reset_while_a_shot_is_flying_cancels_it(self):
+        battle = Battle()
+        battle.fire()
+        for _ in range(10):
+            battle.update()
+        battle.reset()
+        self.assertIsNone(battle.projectile)
+        self.assertEqual(battle.active_side, "left")
+        self.assertEqual(battle.take_events(), [])
+        battle.update()                           # nothing left to move or explode
+        self.assertEqual(battle.castles["right"].total_hp(), 1500)
         self.assertTrue(battle.fire())
 
 

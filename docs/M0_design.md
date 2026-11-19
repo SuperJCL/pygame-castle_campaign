@@ -319,7 +319,7 @@ Examples (Level 1):
 ### 4.3 Damage to castle blocks (one explosion)
 ```
 block_damage = int(attacker.atk * shot_multiplier * attacker.BLOCK_DAMAGE_MULT)   # M2+
-block_damage = SHOT_BLOCK_DAMAGE = 30                                             # M1 (no characters)
+block_damage = SHOT_BLOCK_DAMAGE = 50                                             # M1 (no characters; 30 until M1.1)
 ```
 Blocks have no DEF and cannot defend. Level 1 values: Knight 30, Archer 30, Engineer 51,
 Archer Power Shot int(40 × 1.5 × 0.75) = 45.
@@ -351,9 +351,11 @@ On an intact castle, a hit damages **2–6 blocks, usually 3–4** (77 % of hits
   15 blocks, 1500 HP in total. Front tower height 160 px. Back wall height 32 px.
 - `destruction % = 100 × (1 − current total block HP / max total block HP)`. It counts damage,
   not destroyed blocks, so every hit moves the bar.
-- **Loss at ≥ 60 %**, which is 900 HP of damage. With M1's fixed 30 damage per block, it takes a
-  median of **10 hits** (9–13 in 80 % of simulated games, §14). A Level-1 Knight or Archer also
-  deals 30 per block, so it needs about the same; an Engineer (51 per block) needs about 5–6.
+- **Loss at ≥ 60 %**, which is 900 HP of damage. With M1.1's fixed 50 damage per block, a
+  player who always picks the best shot needs 4 hits, a skilled player about 6 (5–8), and a
+  casual player about 8 (5–17) (M1.1 notes below). With M1's original 30 it was 7, 10 and 15.
+  A Level-1 Knight or Archer deals only 30 per block, so M2 must re-check this scale (see the
+  M1.1 notes).
 - Blocks do **not** fall when the block below them is destroyed, and neither does the cannon.
   This is an accepted simplification (R4).
 
@@ -707,7 +709,7 @@ approves.
      side, angle, power, both destruction %).
   2. A shot follows a visible arc and explodes on an enemy block or the ground. A shot leaving the
      screen sideways, or still flying after 600 steps, is a miss. Shots pass through their own castle.
-  3. Blocks within 50 px lose 30 HP (or all they have left, if less), and the destruction %
+  3. Blocks within 50 px lose 50 HP (or all they have left, if less; 30 HP before M1.1), and the destruction %
      updates at once.
   4. Input is ignored while a shot flies, then control alternates.
   5. A castle reaching ≥ 60 % ends the game with a banner, and R restarts.
@@ -931,8 +933,9 @@ Revision 2 checks below.
 - **No unit tests:** there is still no code to test in M0.
 
 ### M1 implementation notes (where the code departs from this document)
-All physics constants, the castle layout, the 50 px blast and the 30 block damage are implemented
-exactly as written. Departures, each found while building or running M1:
+All physics constants, the castle layout and the 50 px blast are implemented exactly as written.
+The M1 block damage was 30 as written, then raised to 50 in M1.1 (see below). Departures, each
+found while building or running M1:
 - **Block colours:** §11 asked for three HP bands. In play, a single hit (30 damage → 70 HP)
   didn't change a block's look, so blocks now darken in proportion to their HP (100 % → 40 % of
   the colour). Every hit is visible. The planned crack lines stay in M4.
@@ -946,3 +949,35 @@ exactly as written. Departures, each found while building or running M1:
 - **Draw rule present but unreachable in M1:** `Battle.check_winner()` checks both castles and
   returns `"draw"` if both have fallen (tested directly). An M1 shot damages only one castle, so it
   can't happen in play yet.
+
+### M1.1 notes (after human acceptance testing)
+- **Aiming and restart failed for the human tester. Root cause: a Chinese input method (IME).**
+  This machine's default input method is a Chinese IME. Pygame starts in "text input" mode, so
+  key presses go through the IME. Reproduced with real OS keystrokes:
+  - R never reached the game: the IME started composing "r".
+  - While it was composing, the IME also took the arrow keys (choosing a candidate) and SPACE
+    (committing a Chinese character), so aiming and firing stopped working.
+  - The earlier automated M1 check posted key events straight into Pygame's queue, which
+    bypasses the IME, so it couldn't see this.
+
+  **Fix:** `main.open_window()` calls `pygame.key.stop_text_input()`. Regression test:
+  `tests/test_main.py` checks through SDL that text input is off after the window opens. The
+  game's own key handling and restart logic were correct; tests confirm both.
+- **Pacing: `SHOT_BLOCK_DAMAGE` 30 → 50** (block HP 100, blast 50 px and the 60 % loss line
+  unchanged). Two hits now destroy a block.
+
+  Simulated with the real `battle.py`, counting shots by the winning side to bring the enemy
+  castle to 60 % (the full match is about twice as many turns; people also need a few extra
+  ranging shots at the start):
+
+  | Damage | Expert (best shot each turn) | Skilled (±2°/±3 power) | Casual (±4°/±6 power) |
+  |---|---|---|---|
+  | 30 | 7 | median 10 (9–12) | median 15 (10–21) |
+  | 40 | 6 | median 8 (6–10) | median 10 (6–22) |
+  | 50 | 4 | median 6 (5–8) | median 8 (5–17) |
+- **Implications:**
+  - Shorter matches make the left side's first-move advantage count for more. Watch for it in
+    playtests.
+  - The M2 character values (§3.2, §4.3: Knight and Archer deal 30 per block) would bring back
+    the slow pacing. M2 must rescale them, for example with a higher `BLOCK_DAMAGE_MULT` or the
+    50-damage baseline, and re-run this table.

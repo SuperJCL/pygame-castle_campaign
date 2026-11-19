@@ -51,12 +51,18 @@ In VS Code you can also pick the `.venv` interpreter (**Python: Select Interpret
 | R | Restart the match |
 | Esc | Quit |
 
+Holding an arrow key keeps changing the value. SPACE fires once per press.
+
+**If the keys don't respond:** click once inside the game window, so it has keyboard focus.
+Chinese and other input methods (IMEs) are turned off inside the game window, so you don't need
+to switch the keyboard to English first.
+
 ## How to play (M1)
 - The left cannon shoots first, then the turns alternate: left, right, left, …
   The active cannon has a yellow ring, and the orange arrow shows its aim (longer = more power).
 - A shot flies in an arc under gravity. It explodes when it hits an enemy block or the ground.
-  Every enemy block whose centre is within 50 pixels of the explosion loses 30 HP (blocks start
-  with 100 HP). Damaged blocks get darker, and destroyed blocks disappear.
+  Every enemy block whose centre is within 50 pixels of the explosion loses 50 HP (blocks start
+  with 100 HP, so two hits destroy a block). Damaged blocks get darker, and destroyed blocks disappear.
 - Shots fly straight through their own castle (there is no friendly fire). A shot that leaves
   the screen sideways is a miss.
 - Each castle's destruction percentage is shown at the top. A castle that reaches **60 %**
@@ -67,7 +73,9 @@ From the project folder:
 ```
 python -m unittest discover tests
 ```
-The tests cover the game logic (`castle.py`, `battle.py`) and do not need Pygame or a window.
+The tests for the game logic (`castle.py`, `battle.py`) do not need Pygame. The tests in
+`tests/test_main.py` (keyboard handling, restart, window setup) need Pygame; they are skipped
+if it isn't installed, and they never open a visible window.
 
 ## Project layout
 | File | Purpose |
@@ -75,7 +83,7 @@ The tests cover the game logic (`castle.py`, `battle.py`) and do not need Pygame
 | `main.py` | Pygame window, keyboard input, drawing and the main loop (the only file that uses Pygame) |
 | `battle.py` | Cannons, projectile physics, turns, explosions and victory rules |
 | `castle.py` | `Block` and `Castle` classes: castle layout, damage and destruction percentage |
-| `tests/` | `unittest` tests for `castle.py` and `battle.py` |
+| `tests/` | `unittest` tests for `castle.py`, `battle.py` and `main.py` |
 | `docs/M0_design.md` | Approved design: rules, architecture, roadmap |
 | `docs/Rebound_reference_review.md` | Review of a reference project (ideas only) |
 

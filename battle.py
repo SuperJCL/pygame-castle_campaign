@@ -21,7 +21,8 @@ DT = 1 / 60                   # seconds per physics step (one step per frame at 
 MAX_STEPS = 600               # a shot still flying after 600 steps (10 s) is a miss
 
 BLAST_RADIUS = 50             # blocks whose centre is this close to an explosion are hit
-SHOT_BLOCK_DAMAGE = 30        # M1 only: every shot deals 30 damage to each block it hits
+SHOT_BLOCK_DAMAGE = 50        # M1 only: every shot deals 50 damage to each block it hits
+                              # (30 in M1; raised in M1.1 because castles took too many shots)
 
 MIN_ANGLE, MAX_ANGLE, DEFAULT_ANGLE = 5, 80, 45      # degrees above horizontal
 MIN_POWER, MAX_POWER, DEFAULT_POWER = 10, 100, 50

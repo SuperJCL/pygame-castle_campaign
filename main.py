@@ -241,11 +241,23 @@ class Game:
                        center=(WINDOW_WIDTH // 2, 295))
 
 
-def main():
+def open_window():
+    """Start Pygame, open the game window and set up the keyboard. Returns the screen."""
     pygame.init()
     screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
     pygame.display.set_caption("Castle Siege - M1 prototype")
     pygame.key.set_repeat(250, 40)    # holding an arrow key keeps changing the aim
+    # Pygame starts in "text input" mode, which sends key presses through the
+    # operating system's input method. With a Chinese input method active, R was
+    # captured to type Chinese, and while it was waiting for more letters it also
+    # captured the arrow keys and SPACE. The game only needs plain key presses,
+    # so text input is switched off.
+    pygame.key.stop_text_input()
+    return screen
+
+
+def main():
+    screen = open_window()
     clock = pygame.time.Clock()
     game = Game(screen)
     while game.running:

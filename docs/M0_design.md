@@ -929,3 +929,20 @@ Revision 2 checks below.
 - **Files changed:** `docs/M0_design.md` (this revision), `docs/Rebound_reference_review.md`
   (new). No game code.
 - **No unit tests:** there is still no code to test in M0.
+
+### M1 implementation notes (where the code departs from this document)
+All physics constants, the castle layout, the 50 px blast and the 30 block damage are implemented
+exactly as written. Departures, each found while building or running M1:
+- **Block colours:** §11 asked for three HP bands. In play, a single hit (30 damage → 70 HP)
+  didn't change a block's look, so blocks now darken in proportion to their HP (100 % → 40 % of
+  the colour). Every hit is visible. The planned crack lines stay in M4.
+- **Fonts:** `pygame.font.SysFont` crashed at start-up on the development Windows machine (Pygame
+  2.6.1 hit a non-text value while reading the Windows font registry). `main.py` uses Pygame's
+  built-in font (`pygame.font.Font(None, size)`) instead.
+- **SPACE must be released between shots:** arrow keys repeat while held, so a held SPACE could
+  have fired the next player's cannon as soon as their turn began. This is an input rule only.
+- **`Battle.simulate_impact` deferred to M3:** in M1 only tests would call it, and the tests now
+  drive real shots through `fire()` and `update()`. It will be added when the Hard AI needs it.
+- **Draw rule present but unreachable in M1:** `Battle.check_winner()` checks both castles and
+  returns `"draw"` if both have fallen (tested directly). An M1 shot damages only one castle, so it
+  can't happen in play yet.

@@ -981,3 +981,40 @@ found while building or running M1:
   - The M2 character values (§3.2, §4.3: Knight and Archer deal 30 per block) would bring back
     the slow pacing. M2 must rescale them, for example with a higher `BLOCK_DAMAGE_MULT` or the
     50-damage baseline, and re-run this table.
+
+### M2.1 notes (character system)
+`characters.py` implements the §3.1–§3.5 attributes, the cooldown rule and the EXP rules exactly
+(threshold `30 × level`, +10 max HP / +10 HP / +3 ATK / +1 DEF, maximum level 5, nothing for a
+defeated character). EXP lasts one match because each match creates new character objects.
+
+**Departures from §5.2, as the M2.1 brief asked:**
+- `calculate_damage(attack, defense, defending)` and `take_hit(attacker)` have no multiplier or
+  ignore-DEF parameters yet. Those exist only for Archer's Power Shot and arrive with the
+  specials in M2.2.
+- `use_special()` takes no team argument and only returns a description of the ability. The
+  effects (and the team argument) come in M2.2.
+- Deferred until something uses them:
+  - `hp_ratio()` (M3 AI, HP bars);
+  - `block_damage()` and `BLOCK_DAMAGE_MULT` (when characters fire the cannon);
+  - `slot_x` (drawing);
+  - `ARCHETYPES` (team selection);
+  - the Power Shot constants.
+- Added: `exp_to_next_level()`. Also, `take_damage` and `gain_exp` reject negative amounts with
+  `ValueError`.
+
+**Gap in this document, decided here:** §3.5 says EXP "is no longer added" at Level 5, but not
+what happens to EXP left over when an award reaches Level 5. Decision: the leftover is discarded
+and `exp` stays 0 at Level 5.
+
+**Open conflict, not changed in M2.1:** §3.2 and §4.3 give Level-1 block damage of 30 (Knight,
+Archer), but M1.1 raised the baseline to 50 because 30 made matches too long. This has to be
+settled in M2.2/M2.3, when characters start firing the cannon.
+
+**Damage formula and the course's example:** the course's example formula still isn't available
+to us (§13, Q1), so we can't state the exact difference. Ours is `ATK − DEF`, minimum 1; when
+the target is defending, the result is halved (rounded down), still minimum 1. The points most
+likely to differ from a course example:
+1. the minimum of 1 damage;
+2. halving after DEF rather than before;
+3. rounding down to whole numbers.
+Each would be a one-line change in `calculate_damage`.

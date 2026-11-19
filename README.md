@@ -73,7 +73,7 @@ From the project folder:
 ```
 python -m unittest discover tests
 ```
-The tests for the game logic (`castle.py`, `battle.py`) do not need Pygame. The tests in
+The tests for the game logic (`castle.py`, `battle.py`, `characters.py`) do not need Pygame. The tests in
 `tests/test_main.py` (keyboard handling, restart, window setup) need Pygame; they are skipped
 if it isn't installed, and they never open a visible window.
 
@@ -83,7 +83,8 @@ if it isn't installed, and they never open a visible window.
 | `main.py` | Pygame window, keyboard input, drawing and the main loop (the only file that uses Pygame) |
 | `battle.py` | Cannons, projectile physics, turns, explosions and victory rules |
 | `castle.py` | `Block` and `Castle` classes: castle layout, damage and destruction percentage |
-| `tests/` | `unittest` tests for `castle.py`, `battle.py` and `main.py` |
+| `characters.py` | `Character` base class with `Knight`, `Archer`, `Engineer`: HP/ATK/DEF, damage, defend, cooldowns, EXP and levels (M2.1; not used by the game screen yet) |
+| `tests/` | `unittest` tests for `castle.py`, `battle.py`, `characters.py` and `main.py` |
 | `docs/M0_design.md` | Approved design: rules, architecture, roadmap |
 | `docs/Rebound_reference_review.md` | Review of a reference project (ideas only) |
 

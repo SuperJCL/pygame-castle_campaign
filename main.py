@@ -1,15 +1,17 @@
 """Castle Siege - the Pygame interface (the only module that uses Pygame).
 
 Screens (Game.state):
-  "select"  team selection: team size (1v1, 2v2 or 3v3) and each team's characters
+  "select"  team selection: mode (Player vs AI or two players), AI level, team size
+            (1v1, 2v2 or 3v3) and the characters
   "battle"  the battlefield: pick a character, aim the cannon, pick an action
   "result"  the battlefield with the winner, plus Rematch / Change teams buttons
 The selection screen can also start the classic cannon duel (the M1 prototype,
 with no characters).
 
-Both teams play on this computer and take turns ("hot seat"). All game rules
-live in battle.py, castle.py and characters.py: this file reads the mouse and
-keyboard, calls Battle methods and draws what the Battle reports.
+Player vs AI: the human plays LEFT and the computer (ai.py) picks and plays RIGHT.
+Two players: both teams play on this computer and take turns ("hot seat").
+All game rules live in battle.py, castle.py and characters.py: this file reads
+the mouse and keyboard, calls Battle methods and draws what the Battle reports.
 
 Run from the project folder:   python main.py
 """
@@ -17,6 +19,7 @@ import math
 
 import pygame
 
+from ai import DIFFICULTY_SETTINGS, AIController
 from battle import BLAST_RADIUS, FIELD_WIDTH, MAX_TEAM_SIZE, Battle, direction, other_side
 from castle import GROUND_Y
 from characters import ARCHETYPES, MAX_LEVEL, Archer, Knight
@@ -24,6 +27,7 @@ from characters import ARCHETYPES, MAX_LEVEL, Archer, Knight
 WINDOW_WIDTH = FIELD_WIDTH        # 1280
 WINDOW_HEIGHT = 720
 FPS = 60
+AI_DELAY_FRAMES = 40              # the computer waits this long (2/3 s) before it acts
 EXPLOSION_FRAMES = 20             # how long an explosion stays on screen
 LOG_LINES = 6                     # combat-log lines shown at once
 PANEL_TOP = 580                   # the control panel fills the bottom of the window
@@ -185,12 +189,18 @@ class TeamSelection:
     """The choices made on the team-selection screen. (No drawing happens here.)
 
     Each team picks `team_size` different roles. The order of the picks is the
-    slot order: the first pick stands nearest the team's castle.
+    slot order: the first pick stands nearest the team's castle. Against the
+    computer (vs_ai) only the LEFT team is picked here; the AI builds its own.
     """
 
     def __init__(self):
+        self.vs_ai = True               # Player vs AI is the main mode
+        self.difficulty = "normal"
         self.team_size = 1
         self.picks = {"left": [], "right": []}
+
+    def set_mode(self, vs_ai):
+        self.vs_ai = vs_ai
 
     def set_team_size(self, size):
         if not 1 <= size <= MAX_TEAM_SIZE:
@@ -202,9 +212,11 @@ class TeamSelection:
     def toggle(self, side, role):
         """Add `role` to the team, or remove it if it is already there.
 
-        Returns None, or a message if the team is already full. A role can't be
-        picked twice, so there are never duplicates.
+        Returns None, or a message if the pick is refused (the team is full, or it
+        is the computer's team). A role can't be picked twice, so there are never duplicates.
         """
+        if side == "right" and self.vs_ai:
+            return "The computer picks the RIGHT team when the battle starts."
         picks = self.picks[side]
         if role in picks:
             picks.remove(role)
@@ -216,8 +228,9 @@ class TeamSelection:
         return None
 
     def is_complete(self):
-        """True when both teams have exactly team_size characters."""
-        return all(len(picks) == self.team_size for picks in self.picks.values())
+        """True when every team picked here has exactly team_size characters."""
+        sides = ["left"] if self.vs_ai else ["left", "right"]
+        return all(len(self.picks[side]) == self.team_size for side in sides)
 
     def roster(self):
         """The picks in the form Battle(roster=...) expects."""
@@ -240,6 +253,8 @@ class Game:
         self.state = "select"
         self.selection = TeamSelection()
         self.battle = None
+        self.ai = None                # the AIController playing RIGHT, or None (two players)
+        self.ai_wait = 0              # frames the computer has waited on this turn
         self.selected = {"left": 0, "right": 0}   # slot of the character chosen to act
         self.explosions = []          # each one is [x, y, age in frames]
         self.log = []                 # combat-log lines, newest last
@@ -249,7 +264,11 @@ class Game:
 
     def make_buttons(self):
         # Team selection screen.
-        self.size_buttons = [Button(470 + i * 120, 115, 105, 44, f"{n} v {n}")
+        self.mode_buttons = {"ai": Button(290, 72, 180, 38, "Player vs AI"),
+                             "pvp": Button(480, 72, 180, 38, "Two players")}
+        self.difficulty_buttons = {level: Button(800 + i * 110, 72, 100, 38, level.capitalize())
+                                   for i, level in enumerate(DIFFICULTY_SETTINGS)}
+        self.size_buttons = [Button(470 + i * 120, 120, 105, 40, f"{n} v {n}")
                              for i, n in enumerate(range(1, MAX_TEAM_SIZE + 1))]
         self.card_rects = {}
         for side, first_x in (("left", 60), ("right", 660)):
@@ -269,19 +288,24 @@ class Game:
 
     # ----- starting matches ------------------------------------------------------
 
-    def start_battle(self, roster):
-        """Start a match. `roster` is None for the classic cannon duel."""
+    def start_battle(self, roster, ai=None):
+        """Start a match. `roster` is None for the classic cannon duel; `ai` is the
+        AIController playing RIGHT, or None if two people play."""
         self.battle = Battle(roster=roster)
+        self.ai = ai
         self.begin_match()
 
     def rematch(self):
         """Play again with the same teams (also the R key)."""
         self.battle.reset()
+        if self.ai is not None:
+            self.ai.new_match()
         self.begin_match()
 
     def begin_match(self):
         self.state = "battle"
         self.selected = {"left": 0, "right": 0}
+        self.ai_wait = 0
         self.explosions = []
         if self.battle.teams is None:
             self.log = []
@@ -292,11 +316,21 @@ class Game:
         self.refresh_buttons()
 
     def try_start(self):
-        if self.selection.is_complete():
-            self.start_battle(self.selection.roster())
-        else:
+        if not self.selection.is_complete():
             size = self.selection.team_size
             self.message = f"Each team needs exactly {size} character{'s' if size > 1 else ''}."
+        elif self.selection.vs_ai:
+            ai = AIController("right", self.selection.difficulty)
+            roster = {"left": list(self.selection.picks["left"]),
+                      "right": ai.pick_team(self.selection.team_size)}
+            self.start_battle(roster, ai)
+        else:
+            self.start_battle(self.selection.roster())
+
+    def is_ai_turn(self):
+        """True while it is the computer's turn to act (it acts by itself in update())."""
+        return (self.state == "battle" and self.ai is not None
+                and self.battle.active_side == self.ai.side and self.battle.can_fire())
 
     # ----- the character who acts --------------------------------------------------
 
@@ -361,7 +395,7 @@ class Game:
                 self.try_start()
         elif key == pygame.K_r:
             self.rematch()
-        elif self.state == "battle" and self.battle.can_fire():
+        elif self.state == "battle" and self.battle.can_fire() and not self.is_ai_turn():
             self.handle_battle_key(key, mods)
         self.refresh_buttons()
 
@@ -400,6 +434,15 @@ class Game:
         self.refresh_buttons()
 
     def click_selection(self, pos):
+        for mode, button in self.mode_buttons.items():
+            if button.is_clicked(pos):
+                self.selection.set_mode(vs_ai=(mode == "ai"))
+                self.message = ("You play LEFT; the computer picks and plays RIGHT." if mode == "ai"
+                                else "Two players: pick both teams, then take turns.")
+        for level, button in self.difficulty_buttons.items():
+            if button.is_clicked(pos):
+                self.selection.difficulty = level
+                self.message = f"Computer level: {level.capitalize()}."
         for size, button in enumerate(self.size_buttons, start=1):
             if button.is_clicked(pos):
                 self.selection.set_team_size(size)
@@ -417,6 +460,9 @@ class Game:
     def click_battle(self, pos):
         if self.battle.teams is None:
             return                                 # the classic duel uses only the keyboard
+        if self.is_ai_turn():
+            self.message = "The computer is playing the RIGHT team's turn."
+            return
         for action, button in self.action_buttons.items():
             if button.is_clicked(pos):
                 self.do_action(action)
@@ -435,18 +481,25 @@ class Game:
 
     def refresh_buttons(self):
         """Enable or disable buttons to match the current situation."""
+        for mode, button in self.mode_buttons.items():
+            button.chosen = (mode == "ai") == self.selection.vs_ai
+        for level, button in self.difficulty_buttons.items():
+            button.chosen = (level == self.selection.difficulty)
+            button.enabled = self.selection.vs_ai
         for size, button in enumerate(self.size_buttons, start=1):
             button.chosen = (size == self.selection.team_size)
         self.start_button.enabled = self.selection.is_complete()
         if self.battle is not None and self.battle.teams is not None:
             index = self.selected_index()
             for action, button in self.action_buttons.items():
-                button.enabled = (self.state == "battle"
+                button.enabled = (self.state == "battle" and not self.is_ai_turn()
                                   and self.battle.why_not_allowed(index, action) is None)
 
     # ----- update ------------------------------------------------------------------
 
     def update(self):
+        if self.is_ai_turn():
+            self.update_ai()
         if self.battle is not None and self.state != "select":
             self.battle.update()
             for event in self.battle.take_events():
@@ -455,6 +508,19 @@ class Game:
                 explosion[2] += 1
             self.explosions = [e for e in self.explosions if e[2] < EXPLOSION_FRAMES]
         self.refresh_buttons()
+
+    def update_ai(self):
+        """On the computer's turn: wait AI_DELAY_FRAMES (so the player can see the turn
+        change), then let the AIController act. Its action goes through the same
+        Battle.perform_action() as the buttons, and its events are shown as usual."""
+        self.ai_wait += 1
+        if self.ai_wait < AI_DELAY_FRAMES:
+            return
+        self.ai_wait = 0
+        plan = self.ai.take_turn(self.battle)
+        if plan is not None:
+            self.selected[self.ai.side] = plan.actor_index         # the panel shows who acted
+            self.log = (self.log + [f"AI ({self.ai.difficulty.capitalize()}): {plan.reason}."])[-50:]
 
     def show_event(self, event):
         """React to one battle event: effects, the log, and the end of the game."""
@@ -483,6 +549,8 @@ class Game:
             special_text = character.special_blocked_reason(team)
         if character.is_defending:
             status = "Defending until your next turn."
+        elif self.ai is not None and self.battle.active_side == self.ai.side:
+            status = "Played by the computer."
         else:
             status = "Click a character or press 1-3 to choose who acts."
         stats = (f"HP {character.hp}/{character.max_hp}   ATK {character.atk}   "
@@ -496,6 +564,8 @@ class Game:
         character = self.selected_character()
         if self.battle.is_over():
             return ["The game is over: choose Rematch or Change teams."]
+        if self.is_ai_turn():
+            return [f"The computer ({self.ai.difficulty.capitalize()}) is choosing the RIGHT team's move..."]
         lines = [f"Aim: angle {cannon.angle}°, power {cannon.power}  (arrow keys, Shift = 5)"]
         if self.battle.projectile is not None:
             lines.append("The shot is in the air...")
@@ -540,17 +610,25 @@ class Game:
 
     def draw_selection(self):
         self.screen.fill(MENU_COLOR)
-        draw_text(self.screen, "CASTLE SIEGE", self.big_font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 45))
-        draw_text(self.screen, "Two players share this computer and take turns. "
-                  "(Player vs AI comes in a later milestone.)",
-                  self.small_font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 90))
-        draw_text(self.screen, "Team size:", self.font, TEXT_COLOR, midright=(455, 137))
+        draw_text(self.screen, "CASTLE SIEGE", self.big_font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 36))
+        draw_text(self.screen, "Mode:", self.font, TEXT_COLOR, midright=(280, 91))
+        for button in self.mode_buttons.values():
+            button.draw(self.screen, self.font)
+        draw_text(self.screen, "Computer:", self.font, TEXT_COLOR, midright=(790, 91))
+        for button in self.difficulty_buttons.values():
+            button.draw(self.screen, self.font)
+        draw_text(self.screen, "Team size:", self.font, TEXT_COLOR, midright=(455, 140))
         for button in self.size_buttons:
             button.draw(self.screen, self.font)
-        for side, title_x in (("left", 60), ("right", 660)):
-            picked = len(self.selection.picks[side])
-            draw_text(self.screen, f"{side.upper()} TEAM   {picked}/{self.selection.team_size} chosen",
-                      self.font, TEAM_COLORS[side], topleft=(title_x, 180))
+        size = self.selection.team_size
+        draw_text(self.screen, f"LEFT TEAM   {len(self.selection.picks['left'])}/{size} chosen"
+                  + ("   (you)" if self.selection.vs_ai else ""),
+                  self.font, TEAM_COLORS["left"], topleft=(60, 180))
+        if self.selection.vs_ai:
+            right_title = f"RIGHT TEAM   the computer picks {size} at START"
+        else:
+            right_title = f"RIGHT TEAM   {len(self.selection.picks['right'])}/{size} chosen"
+        draw_text(self.screen, right_title, self.font, TEAM_COLORS["right"], topleft=(660, 180))
         for (side, role), rect in self.card_rects.items():
             self.draw_card(side, role, rect)
         draw_text(self.screen, self.message, self.small_font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 495))
@@ -563,8 +641,10 @@ class Game:
     def draw_card(self, side, role, rect):
         """One character card on the selection screen, with its stats."""
         picks = self.selection.picks[side]
-        chosen = role in picks
-        pygame.draw.rect(self.screen, (250, 250, 252), rect, border_radius=8)
+        computer_team = side == "right" and self.selection.vs_ai
+        chosen = role in picks and not computer_team
+        background = (236, 238, 242) if computer_team else (250, 250, 252)   # greyed: not clickable
+        pygame.draw.rect(self.screen, background, rect, border_radius=8)
         border = TEAM_COLORS[side] if chosen else DIM_TEXT
         pygame.draw.rect(self.screen, border, rect, 5 if chosen else 2, border_radius=8)
         draw_text(self.screen, role.__name__, self.font, TEXT_COLOR, center=(rect.centerx, rect.top + 20))
@@ -698,7 +778,10 @@ class Game:
             draw_text(self.screen, f"Round {self.battle.round_number}   -   GAME OVER",
                       self.font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 27))
         else:
-            draw_text(self.screen, f"Round {self.battle.round_number}   -   {side.upper()} TEAM'S TURN",
+            player = ""
+            if self.ai is not None:
+                player = "  (computer)" if side == self.ai.side else "  (you)"
+            draw_text(self.screen, f"Round {self.battle.round_number}   -   {side.upper()} TEAM'S TURN{player}",
                       self.font, TEAM_COLORS[side], center=(WINDOW_WIDTH // 2, 27))
         draw_text(self.screen, self.message, self.small_font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 58))
 

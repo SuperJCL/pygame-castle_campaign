@@ -22,6 +22,8 @@ except ImportError:          # Pygame is not installed: the tests below are skip
 SHIFT = pygame.KMOD_SHIFT if pygame else 0
 TOWER = (45, 64)             # hits the enemy tower (4 blocks); see tests/test_combat.py
 FRONT_CHARACTER = (45, 73)   # hits the enemy in slot 0 only
+ALL_THREE = (63, 88)         # the blast reaches all three enemy slots
+HARMLESS = (80, 10)          # falls back on the shooter's own side: no damage
 
 
 def load_sdl():
@@ -65,7 +67,9 @@ class MainTestCase(unittest.TestCase):
         self.game.update()
 
     def start(self, left, right):
-        """Pick the teams on the selection screen (by clicking) and press START."""
+        """Two-player (hot seat) match: choose "Two players", pick both teams by clicking,
+        and press START."""
+        self.click(self.game.mode_buttons["pvp"].rect)
         self.click(self.game.size_buttons[len(left) - 1].rect)
         for side, roles in (("left", left), ("right", right)):
             for role in roles:
@@ -109,6 +113,7 @@ class TeamSelectionTest(MainTestCase):
         for size in (1, 2, 3):
             with self.subTest(size=size):
                 selection = main.TeamSelection()
+                selection.set_mode(vs_ai=False)
                 selection.set_team_size(size)
                 for role in (Knight, Archer, Engineer)[:size]:
                     selection.toggle("left", role)
@@ -117,6 +122,16 @@ class TeamSelectionTest(MainTestCase):
                     selection.toggle("right", role)
                 self.assertTrue(selection.is_complete())
                 self.assertEqual(len(selection.roster()["right"]), size)
+
+    def test_against_the_computer_only_the_left_team_is_picked(self):
+        selection = main.TeamSelection()                   # Player vs AI is the default
+        selection.set_team_size(2)
+        self.assertIn("computer", selection.toggle("right", Knight))
+        self.assertEqual(selection.picks["right"], [])
+        selection.toggle("left", Knight)
+        self.assertFalse(selection.is_complete())
+        selection.toggle("left", Engineer)
+        self.assertTrue(selection.is_complete())
 
     def test_picking_a_role_twice_removes_it(self):
         selection = main.TeamSelection()
@@ -150,6 +165,7 @@ class SelectionScreenTest(MainTestCase):
         self.assertIsNone(self.game.battle)
 
     def test_start_is_refused_until_both_teams_are_complete(self):
+        self.click(self.game.mode_buttons["pvp"].rect)
         self.click(self.game.card_rects[("left", Knight)])
         self.assertFalse(self.game.start_button.enabled)
         self.click(self.game.start_button.rect)
@@ -296,6 +312,95 @@ class ActionButtonTest(MainTestCase):
         self.assertIn("HP 64/90", " ".join(self.game.selected_info_lines()))   # right's turn: Archer selected
 
 
+class AbilityPreflightTest(MainTestCase):
+    """M3.1 preflight: each special played through the interface (clicks and frames),
+    checked in the real Battle and on the drawn screen. Both teams are played by clicking."""
+
+    def act(self, action, aim_at=None, actor=None):
+        """The active team clicks a character (optional), aims (optional) and clicks an action;
+        frames run until any shot has landed."""
+        if actor is not None:
+            self.click(self.character_rect(self.game.battle.active_side, actor))
+        if aim_at is not None:
+            aim(self.game, *aim_at)
+        self.click(self.game.action_buttons[action].rect)
+        finish_shot(self.game)
+
+    def pixel_above_head(self, side, index):
+        """A screen pixel 8 px above a character's head: plain sky unless something is drawn there."""
+        self.game.draw()
+        left, top, width, _ = self.character_rect(side, index)
+        return tuple(self.screen.get_at((left + width // 2, top - 8)))[:3]
+
+    def test_rally_halves_the_next_enemy_hit_on_every_living_ally(self):
+        self.start([Knight, Archer, Engineer], [Archer, Engineer, Knight])
+        self.assertEqual(self.pixel_above_head("left", 1), main.SKY_COLOR)
+        self.act("special")                                    # the left Knight (chosen first): Rally
+        self.assertEqual(self.game.battle.active_side, "right")
+        for index in range(3):                                 # every ally shows the defend bubble
+            self.assertNotEqual(self.pixel_above_head("left", index), main.SKY_COLOR)
+        self.act("attack", ALL_THREE)                          # right Archer hits all three
+        left = self.game.battle.teams["left"].characters
+        # Without Rally: 40-12 = 28, 40-4 = 36, 40-8 = 32. Rally halves each one.
+        self.assertEqual([c.hp for c in left], [140 - 14, 90 - 18, 110 - 16])
+        log = " ".join(self.game.log)
+        self.assertIn("Rally: 3 allies are defending", log)
+        self.assertIn("LEFT Archer takes 18 damage", log)
+        for _ in range(main.EXPLOSION_FRAMES):                 # let the explosion fade
+            self.game.update()
+        self.assertEqual(self.pixel_above_head("left", 1), main.SKY_COLOR)   # Rally is over
+
+    def test_power_shot_does_more_damage_than_the_same_archer_attack(self):
+        self.start([Archer], [Knight])
+        knight = self.game.battle.teams["right"].characters[0]
+        self.act("attack", FRONT_CHARACTER)                    # 40 - 12 = 28
+        self.assertEqual(knight.hp, 140 - 28)
+        self.act("attack", HARMLESS)                           # right passes
+        self.act("special", FRONT_CHARACTER)                   # 40 x 1.5 = 60, DEF ignored
+        self.assertEqual(knight.hp, 140 - 28 - 60)
+        log = " ".join(self.game.log)
+        self.assertIn("Knight takes 28 damage", log)
+        self.assertIn("uses Power Shot", log)
+        self.assertIn("Knight takes 60 damage", log)
+
+    def test_repair_restores_hp_lost_to_a_real_hit_most_damaged_first(self):
+        self.start([Knight], [Engineer])
+        castle = self.game.battle.castles["right"]
+        self.act("attack", TOWER)                              # left: 4 tower blocks x 50
+        self.assertEqual(castle.total_hp(), 1500 - 200)
+        self.assertTrue(self.game.action_buttons["special"].enabled)   # now there is damage to repair
+        self.act("special")                                    # right Engineer: Repair
+        self.assertEqual(castle.total_hp(), 1500 - 200 + 75)
+        self.assertEqual(sorted(b.hp for b in castle.blocks if b.hp < 100), [50, 50, 75])
+        self.assertEqual(int(castle.destruction_percent()), 8)    # HUD: 125 / 1500 lost
+        self.assertIn("regains 75 HP", " ".join(self.game.log))
+        self.assertEqual(self.game.battle.active_side, "left")
+
+    def test_cooldown_counts_down_at_round_starts_and_blocks_the_special_until_ready(self):
+        self.start([Archer], [Knight])
+        archer = self.game.battle.teams["left"].characters[0]
+        self.act("special", HARMLESS)                          # round 1: Power Shot, cooldown 3
+        self.assertEqual((self.game.battle.active_side, archer.special_cooldown), ("right", 3))
+        self.act("defend")                                     # right; round 2 starts
+        for round_number, waiting in ((2, "ready in 2 rounds"), (3, "ready in 1 round")):
+            self.assertEqual(self.game.battle.round_number, round_number)
+            self.assertFalse(self.game.action_buttons["special"].enabled)
+            self.assertIn(waiting, " ".join(self.game.action_hint_lines()))
+            before = (archer.special_cooldown, self.game.battle.active_side,
+                      self.game.battle.teams["right"].characters[0].hp)
+            self.click(self.game.action_buttons["special"].rect)            # refused: no change
+            self.assertIsNone(self.game.battle.projectile)
+            self.assertEqual((archer.special_cooldown, self.game.battle.active_side,
+                              self.game.battle.teams["right"].characters[0].hp), before)
+            self.act("defend")                                 # left
+            self.assertEqual(archer.special_cooldown, 3 - (round_number - 1))   # no tick mid-round
+            self.act("defend")                                 # right; the next round starts
+        self.assertEqual((self.game.battle.round_number, archer.special_cooldown), (4, 0))
+        self.assertTrue(self.game.action_buttons["special"].enabled)
+        self.click(self.game.action_buttons["special"].rect)
+        self.assertIsNotNone(self.game.battle.projectile)     # round 4 = 1 + 3: ready again
+
+
 class ResultScreenTest(MainTestCase):
     def test_defeating_every_enemy_shows_the_result(self):
         self.start([Knight], [Archer])
@@ -344,6 +449,114 @@ class ResultScreenTest(MainTestCase):
         self.game.handle_key(pygame.K_r, 0)
         self.assertEqual(self.game.state, "battle")
         self.assertIsNone(self.game.battle.winner)
+
+
+class PlayerVsAISelectionTest(MainTestCase):
+    """M3.1: the selection screen in Player vs AI mode (the default)."""
+
+    def test_the_game_opens_in_player_vs_ai_mode_at_normal_difficulty(self):
+        self.assertTrue(self.game.selection.vs_ai)
+        self.assertEqual(self.game.selection.difficulty, "normal")
+        self.assertTrue(self.game.mode_buttons["ai"].chosen)
+        self.assertTrue(self.game.difficulty_buttons["normal"].chosen)
+
+    def test_the_computer_team_cannot_be_picked_by_hand(self):
+        self.click(self.game.card_rects[("right", Archer)])
+        self.assertEqual(self.game.selection.picks["right"], [])
+        self.assertIn("computer", self.game.message)
+
+    def test_start_needs_only_the_left_team_and_the_computer_builds_the_right_team(self):
+        for size in (1, 2, 3):
+            with self.subTest(size=size):
+                self.game = main.Game(self.screen)
+                self.click(self.game.size_buttons[size - 1].rect)
+                left = [Archer, Engineer, Knight][:size]
+                for role in left[:-1]:
+                    self.click(self.game.card_rects[("left", role)])
+                self.assertFalse(self.game.start_button.enabled)
+                self.click(self.game.card_rects[("left", left[-1])])
+                self.assertTrue(self.game.start_button.enabled)
+                self.click(self.game.start_button.rect)
+                self.assertEqual(self.game.state, "battle")
+                teams = self.game.battle.teams
+                self.assertEqual([type(c) for c in teams["left"].characters], left)
+                right_roles = [type(c) for c in teams["right"].characters]
+                self.assertEqual(len(right_roles), size)
+                self.assertEqual(len(set(right_roles)), size)          # a legal team
+                self.assertEqual((self.game.ai.side, self.game.ai.difficulty), ("right", "normal"))
+
+    def test_the_difficulty_buttons_choose_the_computer_level(self):
+        self.click(self.game.difficulty_buttons["hard"].rect)
+        self.assertEqual(self.game.selection.difficulty, "hard")
+        self.assertTrue(self.game.difficulty_buttons["hard"].chosen)
+        self.assertFalse(self.game.difficulty_buttons["normal"].chosen)
+        self.click(self.game.card_rects[("left", Knight)])
+        self.click(self.game.start_button.rect)
+        self.assertEqual(self.game.ai.difficulty, "hard")
+
+    def test_two_players_mode_has_no_computer(self):
+        self.click(self.game.mode_buttons["pvp"].rect)
+        self.assertFalse(self.game.selection.vs_ai)
+        self.assertFalse(self.game.difficulty_buttons["easy"].enabled)
+        self.start([Knight], [Archer])
+        self.assertIsNone(self.game.ai)
+
+
+class PlayerVsAIBattleTest(MainTestCase):
+    """M3.1: the computer plays the RIGHT team by itself, through the same Battle methods."""
+
+    def setUp(self):
+        super().setUp()
+        self.click(self.game.card_rects[("left", Knight)])       # 1 v 1, Normal
+        self.click(self.game.start_button.rect)
+
+    def run_frames(self, count):
+        for _ in range(count):
+            self.game.update()
+
+    def test_the_computer_plays_its_turn_after_a_short_pause(self):
+        self.click(self.game.action_buttons["defend"].rect)       # the human ends LEFT's turn
+        self.assertEqual(self.game.battle.active_side, "right")
+        self.run_frames(main.AI_DELAY_FRAMES - 2)
+        self.assertEqual(self.game.battle.active_side, "right")   # still thinking: nothing done yet
+        self.assertIsNone(self.game.battle.projectile)
+        self.run_frames(1)
+        log = " ".join(self.game.log)
+        self.assertIn("AI (Normal):", log)                        # the computer explains its choice
+        self.assertRegex(log, r"RIGHT \w+ (attacks|defends|uses)")  # and its action is logged
+        finish_shot(self.game)
+        self.assertEqual(self.game.battle.active_side, "left")    # one action, then the human again
+        self.assertEqual(self.game.battle.round_number, 2)
+
+    def test_the_human_cannot_act_for_the_computer(self):
+        self.click(self.game.action_buttons["defend"].rect)
+        cannon = self.game.battle.cannons["right"]
+        aim_before = (cannon.angle, cannon.power)
+        for action in ("attack", "defend", "special"):
+            self.assertFalse(self.game.action_buttons[action].enabled)
+            self.click(self.game.action_buttons[action].rect)
+        for key in (pygame.K_UP, pygame.K_RIGHT, pygame.K_SPACE, pygame.K_1):
+            self.game.handle_key(key, 0)
+        self.assertEqual((cannon.angle, cannon.power), aim_before)
+        self.assertIsNone(self.game.battle.projectile)
+        self.click(self.character_rect("right", 0))
+        self.assertIn("computer", self.game.message)
+        self.assertIn("computer", " ".join(self.game.action_hint_lines()))
+
+    def test_a_whole_match_against_the_computer_ends_on_the_result_screen(self):
+        for _ in range(20000):                                    # the human only defends
+            if self.game.state == "result":
+                break
+            if self.game.battle.active_side == "left" and self.game.battle.can_fire():
+                self.click(self.game.action_buttons["defend"].rect)
+            else:
+                self.game.update()
+        self.assertEqual(self.game.state, "result")
+        self.assertEqual(self.game.battle.winner, "right")
+        self.click(self.game.rematch_button.rect)                 # rematch: same teams, same computer
+        self.assertEqual(self.game.state, "battle")
+        self.assertEqual(self.game.battle.round_number, 1)
+        self.assertIsNotNone(self.game.ai)
 
 
 class ClassicDuelTest(MainTestCase):

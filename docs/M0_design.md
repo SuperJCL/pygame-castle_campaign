@@ -1,8 +1,9 @@
 # Castle Siege — M0 Requirements and Architecture
 
-Status: **Revision 3 (M2.3).** This is the living design document. The game is implemented up to
-M2.3 (playable two-player hot-seat combat). Revision 3's final decisions, just below, override
-anything older in this document.
+Status: **Revision 3 (M2.3), updated for M3.1.** This is the living design document. The game is
+implemented up to M3.1 (Player vs AI, plus two-player hot seat). Revision 3's final decisions,
+just below, override anything older in this document. The AI that was built differs from the
+plan in §6.3; see §14, "M3.1 notes".
 
 ### Revision 3 — final decisions (made by the PM and the user in M2.3)
 - **Alternating turns are the final design. Simultaneous turns are cancelled.** The left team
@@ -15,8 +16,9 @@ anything older in this document.
 - **Team sizes:** 1v1, 2v2 or 3v3. That is characters per team, not players. Each team has
   different roles, and both teams have the same size (a rule of the selection screen; the engine
   itself allows unequal teams).
-- **Modes:** M2.3 provides local two-player hot seat as the playable test mode. Player vs AI is
-  the required final mode and comes in M3. No placeholder AI exists.
+- **Modes:** Player vs AI is the primary, course-required mode (built in M3.1; the default on
+  the selection screen): the human plays LEFT, the computer picks and plays RIGHT. Local
+  two-player hot seat (M2.3) stays as an additional mode.
 - **Victory:** defeating every enemy character wins. A 60 % destroyed enemy castle also wins (our
   extra rule), and it can be switched off (`castle_loss_enabled=False`) if the instructor requires
   elimination only.
@@ -451,12 +453,12 @@ What still isn't known (§13, Q1):
 | `battle.py` | M1, grows in M2 | M1: `Cannon`, `Projectile`, `Battle` (alternating shots). M2: adds `ActionPlan`, `Team`, the phases of §2.2 and the `TURN_MODE` switch | no |
 | `main.py` | M1, grows each milestone | Pygame window, screens, input, all drawing, sound | **yes (only this one)** |
 | `characters.py` | M2 | `calculate_damage`, `Character`, `Knight`, `Archer`, `Engineer`, `ARCHETYPES` | no |
-| `ai.py` | M3 | `DIFFICULTY`, `aim_power`, `AIController` | no |
+| `ai.py` | M3.1 | `DIFFICULTY_SETTINGS`, `Plan`, `AIController`, `imagine` (planned: `DIFFICULTY`, `aim_power`) | no |
 
 ```
 main.py ──imports──► battle.py, castle.py         (M1)
                  ──► characters.py (M2), ai.py (M3)
-ai.py   ──imports──► battle.py (Projectile simulation, ActionPlan)
+ai.py   ──imports──► battle.py, castle.py, characters.py (M3.1: it plays on copies of a Battle)
 battle.py ─imports─► castle.py; characters.py from M2
 characters.py, castle.py ── import nothing from the project
 ```
@@ -531,7 +533,12 @@ without making this game better.
 
 ---
 
-## 6. Player vs AI now, local PvP later (M3)
+## 6. Player vs AI and local PvP
+
+*M3.1 built Player vs AI differently from this section's plan.* There is no `submit_plan` or
+`team.ai`: the `AIController` calls `Battle.perform_action()` on its turn, exactly like the
+buttons, and `main.py` holds the controller (`Game.ai`). The AI actually built is described in
+§14, "M3.1 notes"; §6.3 below is the original plan, kept as a record.
 
 ### 6.1 One rule: the battle doesn't know who is playing
 `Battle` only ever receives `ActionPlan`s through `submit_plan(side, plan)`. Each `Team` has an
@@ -663,13 +670,14 @@ of the PM's list of important requirements.
 | Special ability + cooldown | `use_special` overrides, `start_cooldown` / `tick_cooldown` | M2 | test_characters (round r → r + cooldown), test_battle |
 | HP, ATK, DEF, EXP, Level | `Character` attributes, `gain_exp` | M2 | test_characters (thresholds, stat gains, dead earn nothing) |
 | OOP inheritance and encapsulation | `Character` → `Knight / Archer / Engineer`; private state | M2 | code review, class diagram (M5) |
-| Character selection | `TEAM_SELECT` screen, `ARCHETYPES`, `AIController.choose_team` | M2 (AI's pick in M3) | manual checklist; test_ai (`choose_team` returns `count` different archetypes) |
+| Character selection | `TEAM_SELECT` screen, `ARCHETYPES`, `AIController.pick_team` | M2 (AI's pick in M3.1) | test_main; test_ai (`pick_team(size)` returns `size` different roles) |
 | HP bars, action buttons, combat log, result screen | `Game.draw_*`, `Button`, `Battle.log`, `RESULT` state | M2 (basic), M4 (polish) | manual checklist; test_battle (log entries) |
 | Alternating turns (simultaneous resolution cancelled in M2.3) | `Battle._finish_turn`, `_start_round`, `_start_turn` | M2.2 | test_combat (turn order, cooldowns once per round, Defend covers exactly one enemy turn) |
 | Elimination victory, castle victory, Draw, tie-break | `Team.has_lost`, `end_round`, `castle_loss_enabled`, §4.7 | M2 | test_battle (both values of `castle_loss_enabled`) |
 | Engineer Repair (capped) | `Castle.repair` | M2 | test_castle (pool examples of §3.4) |
-| Enemy AI, defensive preference below 50 % HP | `AIController.choose_plan`, step 1 | M3 | test_ai (seeded rate check) |
-| AI difficulty Easy / Normal / Hard | `ai.DIFFICULTY` | M3 | test_ai (Hard ≥ Normal ≥ Easy hit rate; AI-vs-AI matches end before the cap) |
+| Enemy AI, defensive preference below 50 % HP | `AIController.wants_to_defend`, `defensive_plan` | M3.1 | test_ai (seeded rate check: below half HP vs not; never two defensive turns in a row) |
+| AI difficulty Easy / Normal / Hard | `ai.DIFFICULTY_SETTINGS` | M3.1 | test_ai (seeded: Hard hits more often than Easy; whole matches end at every size and level) |
+| Player vs AI mode | `main.Game.ai`, `update_ai`, mode and difficulty buttons | M3.1 | test_main (PvAI selection and battle), scripted and real-input runs; human playtest pending |
 | ~~AI never sees the hidden plan~~ | not needed: with alternating turns there are no hidden plans | — | — |
 | Local PvP (hot seat) | `main.py` selection screen + alternating battle | M2.3 | test_main, human playtest |
 | Team selection 1v1 / 2v2 / 3v3, HP bars, action buttons, combat log, result screen | `main.TeamSelection`, `Game` screens | M2.3 | test_main, human playtest |
@@ -706,9 +714,13 @@ of the PM's list of important requirements.
 ### 10.3 Implementation risks
 - **R1 Physics tunnelling.** Prevented by the speed bound (§4.6), enforced by a unit test.
 - **R2 AI strength.** Hard hits characters ~80 % of the time. Tune in M3 with the AI-vs-AI tests.
-  Target: a Normal PvAI match lasts 8–15 rounds.
+  Target: a Normal PvAI match lasts 8–15 rounds. *M3.1 measured (seeded, castle loss off):
+  1v1 character hit rate Easy 23 %, Normal 46 %, Hard 66 %; 3v3 46 / 67 / 85 %. Hard beat Easy in
+  67 of 72 AI-vs-AI matches. AI-vs-AI matches average only 4.8–7.7 rounds, because castle victory
+  comes quickly (see docs/M3.1_balance_analysis.md), so the 8–15-round target isn't met.*
 - **R3 `main.py` grows too large.** If it passes about 600 lines, split the drawing helpers into
-  `ui.py` (a justified 6th module).
+  `ui.py` (a justified 6th module). *`main.py` is 862 lines after M3.1; the split is still a PM
+  decision.*
 - **R4 Floating blocks and cannon.** Without collapse physics, blocks and the cannon can float
   over destroyed blocks. Accepted and documented.
 - **R5 Pygame availability.** Pygame isn't installed in this design environment. The M1 README
@@ -809,6 +821,14 @@ open (see M3). The original plan follows.
   balance.
 
 ### M3 — Enemy AI, difficulty selection and game modes
+**Status after M3.1:**
+- **M3.1 (done, awaiting PM review and human playtesting):** `ai.py` with `AIController` and the
+  Easy / Normal / Hard table; Player vs AI as the default mode on the selection screen (mode and
+  difficulty buttons; the computer builds a legal RIGHT team of the same size); a preflight of
+  the M2.3 abilities; a Defend / Repair balance analysis (analysis only).
+- **Still open in M3:** the round limit and tie-break (§4.7); any balance changes the PM approves
+  from `docs/M3.1_balance_analysis.md` (proposed for M3.2). The PM defines M3.2 and M3.3.
+
 **Updated in M2.3.**
 - **Required:** Player vs AI.
   - The AI chooses its team, then on each of its turns a character, an action and an aim.
@@ -1163,3 +1183,118 @@ The physics, collision and damage rules are unchanged.
 - Real OS mouse and keyboard input could **not** be tested this time: Windows refused the game
   window focus. The IME probe showed the game window's input method disabled. Human
   playtesting is still required.
+
+### M3.1 notes (computer opponent and Player vs AI)
+**Decisions (PM, M3.1):**
+- Alternating turns only; simultaneous firing is cancelled permanently.
+- Player vs AI is the primary mode: the human plays LEFT, the AI plays RIGHT.
+- Local two-player play stays as an additional mode.
+- No balance or victory-rule changes without PM approval.
+
+**Preflight of the M2.3 abilities.** New interface-level tests (`tests/test_main.py`,
+`AbilityPreflightTest`) play each special through clicks and frames. They check the results in
+the real `Battle` and on the drawn screen:
+- **Rally:** the next enemy blast on all three allies is halved (14 / 18 / 16 instead of
+  28 / 36 / 32); the defend bubble is drawn, then cleared at the team's next turn.
+- **Power Shot:** 60 damage against the same Knight that a normal Archer Attack hits for 28.
+- **Repair:** after a real tower hit (−200) it restores 75, most damaged blocks first; the HUD
+  shows 8 %.
+- **Cooldowns:** they tick only at round starts; the button is disabled and refuses clicks in
+  rounds 2–3; it is ready again in round 4 = 1 + 3.
+
+Eight injected defects were all caught, including the IME regression (text input left on).
+**No defect was found, so no ability code changed.** Human acceptance of these abilities is still
+pending.
+
+**The AI as built (`ai.py`), not the §6.3 plan:**
+- **Interface:**
+  - `AIController(side, difficulty, seed)`;
+  - `choose(battle)` returns a `Plan` and changes nothing;
+  - `take_turn(battle)` aims the real cannon with `Cannon.adjust_angle` / `adjust_power` and calls
+    `Battle.perform_action()`;
+  - `pick_team(size)` draws distinct roles at random.
+
+  The AI never touches HP or castle blocks directly; a test scans `ai.py` for that.
+- **No combat rule is written twice.** To judge an option, the AI runs it on a
+  `copy.deepcopy` of the battle with the real `perform_action` / `update`, and reads the
+  explosion events (`imagine`). Gravity, speed, collisions and damage formulas are reused
+  unchanged.
+- **Aiming (bounded candidate search):**
+  - It tries angles 30° / 45° / 60° with powers 100, 98, …, stopping at an angle once a shot
+    lands on its own half.
+  - It groups the aims by what they would hit. For each target it keeps the most forgiving aim:
+    the middle power at the angle where the most powers hit.
+  - The options are ranked by `progress()`: the share of the remaining work toward each victory
+    condition (enemy HP, enemy castle HP still to lose before falling, own castle HP repaired),
+    plus a bonus for each defeat and for a win.
+  - Finally it adds a uniform random aiming error.
+
+  One decision takes about 60–120 ms on average (the most measured was 174 ms).
+- **Decision order:**
+  1. **Defend?** `wants_to_defend`: the defend chance is higher when a character is below half
+     HP (the course requirement), and there are never two defensive turns in a row.
+     `defensive_plan` uses Rally if a ready Knight can protect two or more allies, otherwise the
+     weakest character defends.
+  2. **Otherwise attack:** a target is picked among the best `top_choices`, then the shooter
+     (Attack, or Power Shot when specials are considered this turn) among the best
+     `top_choices`. A Repair replaces the attack if its score is higher.
+  3. **Safety net:** a plan that `why_not_allowed` refuses is replaced by Defend, and marked so
+     the tests fail if it is ever used.
+- **Difficulty table** (`DIFFICULTY_SETTINGS`; the rules are the same for all):
+
+| | Easy | Normal | Hard |
+|---|---|---|---|
+| Aiming error, uniform ± (angle / power) | 6° / 8 | 3° / 4 | 1° / 2 |
+| `top_choices` (1 = always the best) | 5 | 3 | 1 |
+| Specials considered on a turn | 25 % | 50 % | 100 % |
+| Defend chance: nobody below half HP / someone below half | 10 % / 40 % | 5 % / 50 % | 0 % / 60 % |
+
+**Measured** (seeded; 150 shots per cell; castle loss off, so only characters count):
+
+| Character hit rate | Easy | Normal | Hard |
+|---|---|---|---|
+| 1v1 | 23 % | 46 % | 66 % |
+| 3v3 | 46 % | 67 % | 85 % |
+
+AI vs AI (castle loss on, 12 seeded matches per pairing and size):
+- Hard beat Easy in 67 of 72 matches.
+- Matches lasted 4.8–7.7 rounds on average.
+- Normal vs Normal: the side moving first won 28 of 36. Hard vs Hard: 18 of 36. So the
+  first-move advantage is unclear and needs a bigger sample.
+
+**Interface changes (`main.py`):**
+- **Selection screen:**
+  - Mode buttons: Player vs AI (the default) and Two players.
+  - Computer level buttons: Easy, Normal (the default), Hard.
+  - In Player vs AI, the RIGHT cards are greyed out and refuse clicks. START needs only the LEFT
+    team, then the AI builds a legal RIGHT team of the same size.
+- **Battle:**
+  - `Game.ai` holds the controller. `update_ai()` waits `AI_DELAY_FRAMES` (40) and then calls
+    `take_turn`.
+  - During the AI's turn, buttons, aiming keys and character clicks are disabled.
+  - The log adds "AI (level): reason."; the existing events show the effects. The HUD says
+    "(you)" or "(computer)".
+- **Rematch:** keeps the teams and the controller (`new_match()`).
+
+No engine module (`battle.py`, `castle.py`, `characters.py`) changed in M3.1.
+
+**Balance research:** `docs/M3.1_balance_analysis.md`. It is analysis only; nothing changed.
+
+**Verification:**
+- **Tests:** 194 in total. 52 need Pygame; the rest, including the 27 AI tests, need only the
+  standard library.
+- **Injected defects:** 17 AI and Player-vs-AI defects were each caught.
+- **Scripted runs** of the real `main.main()` with posted events:
+  - Player vs AI, 24 / 24 checks, for Easy 1v1, Normal 2v2 and Hard 3v3, up to the result and
+    Rematch;
+  - the M2.3 hot-seat drives through "Two players";
+  - the original M1 duel drive (15 / 15; it ends on frame 713, as before).
+- **Real Windows input** (`SendInput`, only while the game window had focus): 11 / 11 checks.
+  - Real clicks: picking a card; the AI's card refused; START; DEFEND; ATTACK, which was ignored
+    on the computer's turn.
+  - Real keys: arrows, Shift, R and SPACE.
+  - The computer took its own turn.
+  - The first attempt clicked at a stale position. Cause: my driver clicked without a preceding
+    mouse move. The driver was fixed; the game was not changed.
+
+This is still not human gameplay acceptance.

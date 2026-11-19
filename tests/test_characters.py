@@ -281,6 +281,20 @@ class SpecialAvailabilityTest(unittest.TestCase):
         knight.start_cooldown()
         self.assertFalse(knight.can_use_special(team))
 
+    def test_blocked_reason_counts_down_the_rounds(self):
+        knight = Knight("K", "left")
+        team = make_team(knight)
+        self.assertIsNone(knight.special_blocked_reason(team))
+        knight.start_cooldown()
+        self.assertEqual(knight.special_blocked_reason(team), "Rally is recharging: ready in 4 rounds")
+        for _ in range(3):
+            knight.tick_cooldown()
+        self.assertEqual(knight.special_blocked_reason(team), "Rally is recharging: ready in 1 round")
+
+    def test_repair_blocked_reason_says_there_is_nothing_to_repair(self):
+        engineer = Engineer("E", "left")
+        self.assertIn("nothing to repair", engineer.special_blocked_reason(make_team(engineer)))
+
     def test_repair_also_needs_a_damaged_surviving_block(self):
         engineer = Engineer("E", "left")
         team = make_team(engineer)

@@ -152,6 +152,12 @@ class Team:
         """Centre point of the character standing in slot `index`."""
         return (SLOT_X[self.side][index], GROUND_Y - CHARACTER_HEIGHT // 2)
 
+    def character_rect(self, index):
+        """(left, top, width, height) of the character in slot `index`: it stands on the ground."""
+        center_x, _ = self.slot_center(index)
+        return (center_x - CHARACTER_WIDTH // 2, GROUND_Y - CHARACTER_HEIGHT,
+                CHARACTER_WIDTH, CHARACTER_HEIGHT)
+
     def character_at(self, px, py):
         """The living character whose rectangle contains (px, py), or None.
 
@@ -160,9 +166,8 @@ class Team:
         for index, character in enumerate(self.characters):
             if not character.is_alive():
                 continue
-            center_x, _ = self.slot_center(index)
-            if (center_x - CHARACTER_WIDTH / 2 <= px < center_x + CHARACTER_WIDTH / 2
-                    and GROUND_Y - CHARACTER_HEIGHT <= py < GROUND_Y):
+            left, top, width, height = self.character_rect(index)
+            if left <= px < left + width and top <= py < top + height:
                 return character
         return None
 
@@ -243,7 +248,7 @@ class Battle:
         Returns True if the action was carried out. If it isn't allowed, returns
         False, records an "invalid" event with the reason, and changes nothing else.
         """
-        reason = self._why_not_allowed(actor_index, action)
+        reason = self.why_not_allowed(actor_index, action)
         if reason is not None:
             self._events.append({"type": "invalid", "reason": reason})
             return False
@@ -271,8 +276,11 @@ class Battle:
                 self._finish_turn(actor, EXP_FOR_SUPPORT_SPECIAL)
         return True
 
-    def _why_not_allowed(self, actor_index, action):
-        """None if the action may be performed now, otherwise the reason it can't."""
+    def why_not_allowed(self, actor_index, action):
+        """None if the action may be performed now, otherwise the reason it can't.
+
+        Only asks: nothing changes. The interface uses it to grey out buttons.
+        """
         if self.teams is None:
             return "this battle has no characters (it is the M1 cannon duel)"
         if not self.can_fire():
@@ -285,8 +293,8 @@ class Battle:
             return f"{actor.name} has been defeated and can't act"
         if action not in ACTIONS:
             return f"unknown action {action!r}"
-        if action == "special" and not actor.can_use_special(team):
-            return f"{actor.name} can't use {actor.SPECIAL_NAME} now"
+        if action == "special":
+            return actor.special_blocked_reason(team)   # None if the special is available
         return None
 
     # ----- flight and explosions ------------------------------------------------

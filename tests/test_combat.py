@@ -105,6 +105,12 @@ class TeamTest(unittest.TestCase):
         self.assertTrue(team.has_lost())
         self.assertFalse(team.has_lost(castle_loss_enabled=False))
 
+    def test_character_rect_is_the_28_by_44_box_standing_on_its_slot(self):
+        right = Team("right", [Knight("K", "right"), Archer("A", "right")], Castle("right"))
+        # Slot 0 centre (1140, 538): left edge 1140 - 14, top 560 - 44.
+        self.assertEqual(right.character_rect(0), (1126, 516, 28, 44))
+        self.assertEqual(right.character_rect(1), (1171, 516, 28, 44))
+
     def test_slots_are_mirror_images_with_slot_0_nearest_the_castle(self):
         left = Team("left", [Knight("K", "left"), Archer("A", "left"), Engineer("E", "left")], Castle("left"))
         right = Team("right", [Knight("K", "right"), Archer("A", "right"), Engineer("E", "right")], Castle("right"))
@@ -145,6 +151,18 @@ class ValidationTest(unittest.TestCase):
         self.assertFalse(battle.perform_action(1, "defend"))
         self.assertIs(battle.projectile, shot)
         self.assertFalse(battle.teams["left"].characters[1].is_defending)
+
+    def test_why_not_allowed_answers_without_doing_anything(self):
+        battle = combat([Archer, Engineer], [Knight])
+        archer = battle.teams["left"].characters[0]
+        self.assertIsNone(battle.why_not_allowed(0, "attack"))
+        self.assertIsNone(battle.why_not_allowed(0, "special"))
+        archer.start_cooldown()
+        self.assertEqual(battle.why_not_allowed(0, "special"),
+                         "Power Shot is recharging: ready in 3 rounds")
+        self.assertIn("nothing to repair", battle.why_not_allowed(1, "special"))
+        self.assertEqual(battle.take_events(), [])                # asking records nothing
+        self.assertEqual(battle.active_side, "left")
 
     def test_each_mode_keeps_its_own_way_of_acting(self):
         self.assertFalse(Battle().perform_action(0, "attack"))  # the M1 duel has no characters

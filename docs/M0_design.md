@@ -1,7 +1,27 @@
 # Castle Siege — M0 Requirements and Architecture
 
-Status: **Revision 2 — draft for project-manager review.** No game code has been written.
-Milestone: M0 (design only). M1 starts only after the PM approves this document.
+Status: **Revision 3 (M2.3).** This is the living design document. The game is implemented up to
+M2.3 (playable two-player hot-seat combat). Revision 3's final decisions, just below, override
+anything older in this document.
+
+### Revision 3 — final decisions (made by the PM and the user in M2.3)
+- **Alternating turns are the final design. Simultaneous turns are cancelled.** The left team
+  acts, then the right team; on its turn a team picks one living character and one action.
+  There is no simultaneous planning, hidden action submission or simultaneous firing. This also
+  makes us compliant with the course's turn rule (§10, C1).
+  - §2.2 (the simultaneous round flow), the `TURN_MODE` switch, `ActionPlan` / `submit_plan`, the
+    hidden-plan rule (§2.4 rule 7) and the PvP HANDOVER cover screen are **not built**. They are
+    kept below only as a record.
+- **Team sizes:** 1v1, 2v2 or 3v3. That is characters per team, not players. Each team has
+  different roles, and both teams have the same size (a rule of the selection screen; the engine
+  itself allows unequal teams).
+- **Modes:** M2.3 provides local two-player hot seat as the playable test mode. Player vs AI is
+  the required final mode and comes in M3. No placeholder AI exists.
+- **Victory:** defeating every enemy character wins. A 60 % destroyed enemy castle also wins (our
+  extra rule), and it can be switched off (`castle_loss_enabled=False`) if the instructor requires
+  elimination only.
+
+Revision 2's original header: *draft for project-manager review; M0 design only.*
 
 Revision 2 updates Revision 1 (commit `2b865e8`). It follows PM feedback and a technical review
 of the Rebound reference project (`docs/Rebound_reference_review.md`). The core concept is
@@ -33,9 +53,10 @@ so it can be changed without touching logic.
 ### 1.1 Pitch
 A 2D side-view artillery game. Two castles face each other across an open field. Each castle
 has **one cannon** on top of its front tower. Behind each castle stand 1–3 characters (Knight,
-Archer, Engineer). Every round, each side secretly picks **one** character and **one** action
-(Attack, Defend or Special). When both sides are ready, the actions resolve **at the same time**:
-the cannons fire together, the shots fly, then they explode.
+Archer, Engineer). The teams take turns: the left team, then the right team. On its turn a team
+picks **one** living character and **one** action (Attack, Defend or Special). An Attack fires
+the team's cannon; the shot flies, then explodes. *(Revision 2 resolved both sides' actions at
+the same time; that was cancelled in M2.3.)*
 
 The acting character *operates* its team's cannon: the character's stats decide the damage.
 The cannon itself is scenery. It cannot be damaged.
@@ -45,19 +66,19 @@ A team **loses** at the end of a round if either:
 - its castle is **≥ 60 % destroyed**, or
 - **all** of its characters are defeated (HP 0).
 
-If both teams lose in the same round, the match is a **Draw**. Safety net: after **round 30**
-(`ROUND_LIMIT`) the tie-break in §4.7 decides. Simultaneous turns, the castle loss, the Draw and
-the round limit all differ from the course specification and need instructor approval (§10: C1,
-C2, C7). §2.3 gives switches for alternating turns and for elimination-only victory. The round
-limit stays in every mode, because it guarantees that a match ends.
+If both teams lose at the same time, the match is a **Draw**. With alternating turns this can't
+happen during play, because only one team acts at a time.
+- **Planned, not built yet:** after round 30 (`ROUND_LIMIT`), the tie-break in §4.7 decides.
+- **Still needs instructor approval:** the castle loss and the round limit differ from the course
+  specification (§10: C2, C7). Elimination-only victory is a switch (`castle_loss_enabled`).
 
 ### 1.3 Modes, by milestone
 - **M1 prototype:** one keyboard controls both cannons, and shots alternate left, right, left…
-  No characters.
-- **M2:** full combat rules. Both sides are planned from one keyboard. This is a testing
-  harness, not a final mode.
-- **M3:** Player vs AI (Easy / Normal / Hard), and local Player vs Player ("hot seat", with a
-  cover screen so Player 2 can't see Player 1's plan).
+  No characters. It is still available as the "Classic cannon duel" button.
+- **M2.3 (built):** local two-player hot seat with full combat rules. Two people share the mouse
+  and keyboard and take turns. No cover screen is needed, because nothing is hidden with
+  alternating turns.
+- **M3:** Player vs AI (Easy / Normal / Hard), the required final mode, next to the hot-seat mode.
 
 ### 1.4 The battlefield (1280 × 720 window, 60 FPS)
 ```
@@ -113,13 +134,15 @@ y=720  +------------------------------------------------------------------------
 
 ### 2.1 Screen flow (in `main.py`), by milestone
 ```
-M1:  BATTLE (press R to restart)
-M2:  TEAM_SELECT ──► BATTLE ──► RESULT ──► TEAM_SELECT
-M3:  TITLE ──► SETUP ──► TEAM_SELECT ──► BATTLE ──► RESULT ──► TITLE (or REMATCH ► TEAM_SELECT)
-            (mode, difficulty)  (P1 picks 1–3; AI picks the same count, or P2 picks)
+M1:    BATTLE (press R to restart)
+M2.3:  "select" ──► "battle" ──► "result" ──► Rematch ──► "battle"
+       (size 1-3,     (turns)      (winner)  └► Change teams ──► "select"
+        both rosters)
+       The "select" screen also starts the classic M1 cannon duel.
+M3:    the same, plus a choice of mode (hot seat / vs AI) and AI difficulty on "select".
 ```
 
-### 2.2 Round flow — simultaneous mode (default, `TURN_MODE = "simultaneous"`)
+### 2.2 Round flow — simultaneous mode (CANCELLED in M2.3; kept only as a record, see §2.3)
 ```
           ┌───────────────────────────────────────────────────────────┐
           ▼                                                           │
@@ -137,9 +160,11 @@ M3:  TITLE ──► SETUP ──► TEAM_SELECT ──► BATTLE ──► RESU
 | **FLIGHT** | Each frame, every flying projectile advances one fixed physics step. When a projectile collides, it **explodes immediately** and its damage is applied right away (§4.4). A character killed mid-flight can't be hit again, but a shot its team already fired keeps flying. FLIGHT ends when no projectile is still flying. |
 | **ROUND_END** | Award EXP to each actor that is still alive, and process level-ups. Check loss conditions for **both** teams at once: neither lost → ROUND_START; one lost → the other wins; both lost → Draw; round 30 finished → tie-break (§4.7). |
 
-### 2.3 Instructor fallbacks: alternating turns, elimination-only victory
-**Alternating mode (`TURN_MODE = "alternating"`).** Use it if the instructor requires players to act
-one after another (§10, C1).
+### 2.3 Alternating turns (the final design, built in M2.2) and elimination-only victory
+**Alternating turns.** Since M2.3 this is the only mode. There is no `TURN_MODE` switch: the
+battle simply alternates. The rules below are implemented as written, except for the
+`TURN_MODE` and `turn_mode` references, which were never built. Originally this was specified
+as the fallback in case the instructor required players to act one after another (§10, C1).
 - Turns strictly alternate: left (the human, in Player vs AI), then right. One round = two turns.
 - A turn is `start_turn(active_side)` → PLANNING (active side only) → RESOLVE_INSTANT → FLIGHT → TURN_END.
 - In this mode, ROUND_START (before the left turn) **only** does `round_number += 1` and ticks the
@@ -516,6 +541,9 @@ without making this game better.
 - `team.ai is None` → `main.py` collects that side's plan from keyboard and mouse.
 
 ### 6.2 What PvP needs (UI only, no battle changes)
+*Done in M2.3, without the cover screen.* With alternating turns nothing is hidden, so local
+PvP is simply the hot-seat game: the selection screen picks both teams, and the players take
+turns. Items 2 and 3 below were written for simultaneous turns.
 1. A SETUP option: "vs AI" / "2 Players".
 2. TEAM_SELECT for Player 2.
 3. A HANDOVER cover screen between planning the left side and planning the right side, so
@@ -637,13 +665,14 @@ of the PM's list of important requirements.
 | OOP inheritance and encapsulation | `Character` → `Knight / Archer / Engineer`; private state | M2 | code review, class diagram (M5) |
 | Character selection | `TEAM_SELECT` screen, `ARCHETYPES`, `AIController.choose_team` | M2 (AI's pick in M3) | manual checklist; test_ai (`choose_team` returns `count` different archetypes) |
 | HP bars, action buttons, combat log, result screen | `Game.draw_*`, `Button`, `Battle.log`, `RESULT` state | M2 (basic), M4 (polish) | manual checklist; test_battle (log entries) |
-| Simultaneous resolution, with an alternating fallback | `Battle` phases, `turn_mode`, `start_turn` | M2 | test_battle (mutual kill → Draw; alternating turn order; Defend covers exactly one enemy turn in both modes) |
+| Alternating turns (simultaneous resolution cancelled in M2.3) | `Battle._finish_turn`, `_start_round`, `_start_turn` | M2.2 | test_combat (turn order, cooldowns once per round, Defend covers exactly one enemy turn) |
 | Elimination victory, castle victory, Draw, tie-break | `Team.has_lost`, `end_round`, `castle_loss_enabled`, §4.7 | M2 | test_battle (both values of `castle_loss_enabled`) |
 | Engineer Repair (capped) | `Castle.repair` | M2 | test_castle (pool examples of §3.4) |
 | Enemy AI, defensive preference below 50 % HP | `AIController.choose_plan`, step 1 | M3 | test_ai (seeded rate check) |
 | AI difficulty Easy / Normal / Hard | `ai.DIFFICULTY` | M3 | test_ai (Hard ≥ Normal ≥ Easy hit rate; AI-vs-AI matches end before the cap) |
-| AI never sees the hidden plan | plan order, private `_plans`, cannons updated only at resolution | M2 (cannon rule), M3 (AI) | test_battle (submitting a plan leaves the cannon unchanged); test_ai (same seed → same plan) |
-| Local PvP | HANDOVER screen + P2 team select | M3 | manual checklist |
+| ~~AI never sees the hidden plan~~ | not needed: with alternating turns there are no hidden plans | — | — |
+| Local PvP (hot seat) | `main.py` selection screen + alternating battle | M2.3 | test_main, human playtest |
+| Team selection 1v1 / 2v2 / 3v3, HP bars, action buttons, combat log, result screen | `main.TeamSelection`, `Game` screens | M2.3 | test_main, human playtest |
 | Background, sound, animations | drawing, `Battle.events` → sounds | M4 | manual checklist (silent fallback if the mixer fails) |
 | Tests | `tests/` with `unittest` | M1–M5 | `python -m unittest discover tests` |
 | Screenshots, documented algorithms, source code, report, demo video | `docs/report/`, README | M5 | rubric audit checklist |
@@ -655,7 +684,7 @@ of the PM's list of important requirements.
 ### 10.1 Differences from the course specification (need instructor confirmation)
 | # | Topic | Compliant? | Our design | If rejected |
 |---|---|---|---|---|
-| **C1** | Alternating turns | **No.** The course describes players acting one after another; we resolve both actions together. | Each round still has exactly one action per side, and the log shows them in a fixed order. | Set `TURN_MODE = "alternating"` (§2.3), one action per side per turn. Recommended to build in M2. If "alternating" means each *character* acts in turn, that needs a different design (Q3). |
+| **C1** | Alternating turns | **Yes, since M2.3.** The teams act one after another, one character and one action per turn. (Revision 2 resolved both actions together; that was cancelled.) | — | If the course means that *every character* acts in turn, rather than one chosen character per team, that would need a change (Q3). |
 | **C2** | Elimination victory | **Partly.** Elimination is kept. We **add** the 60 % castle loss and a Draw; the course mentions only win and lose. | The castle win gives aiming a target that isn't a character. | Set `CASTLE_LOSS_ENABLED = False`. In simultaneous mode a Draw still happens if both teams are eliminated in the same round; in alternating mode only the round-30 tie-break (C7) can produce one. |
 | **C3** | Attacks can miss | **Unknown.** The course may assume every Attack deals damage. | Misses are what make artillery a skill. | Add an assist mode (for example, Easy-only aim help). Not planned. |
 | **C4** | "AI defends below 50 % HP" with a team | **Interpretation.** "HP" is ambiguous with several characters, and our defence is probabilistic (50 / 70 / 85 %). | We use the weakest living AI character. | Set Defend chance to 100 % (one table row). |
@@ -685,7 +714,8 @@ of the PM's list of important requirements.
 - **R5 Pygame availability.** Pygame isn't installed in this design environment. The M1 README
   must pin a version (for example `pygame==2.6.1`), and the logic tests must not import pygame.
   Q2 decides the version.
-- **R6 Hot-seat fairness (PvP).** The HANDOVER screen and the "cannons move only at resolution"
+- **R6 Hot-seat fairness (PvP).** *No longer applies: alternating turns hide nothing.* Original
+  text: the HANDOVER screen and the "cannons move only at resolution"
   rule (§2.4 rule 7) must hide Player 1's angle and power. A manual checklist item verifies it.
 - **R7 Balance.** All numbers are first guesses. Tune constants, not code.
 - **R8 Late instructor answers on C1/C2.** Mitigated by the §2.3 switches, built in M2.
@@ -739,6 +769,15 @@ approves.
   temptation to pull M2 features forward.
 
 ### M2 — Complete combat rules, turns, characters, skills and OOP
+**Status: done in three steps, with alternating turns only.**
+- **M2.1:** the character classes.
+- **M2.2:** team combat in `battle.py`.
+- **M2.3:** the playable hot-seat interface: team selection (1v1, 2v2, 3v3), characters on the
+  battlefield with HP bars, cooldowns, Defend and defeat shown, the ATTACK / DEFEND / SPECIAL
+  buttons, a combat log, and a result screen with Rematch and Change teams.
+
+The `TURN_MODE` switch below was cancelled. The round limit and tie-break (§4.7) are still
+open (see M3). The original plan follows.
 - **Required features:**
   - `characters.py` (§3).
   - TEAM_SELECT (1–3 different archetypes per side; both sides chosen from the keyboard).
@@ -770,6 +809,15 @@ approves.
   balance.
 
 ### M3 — Enemy AI, difficulty selection and game modes
+**Updated in M2.3.**
+- **Required:** Player vs AI.
+  - The AI chooses its team, then on each of its turns a character, an action and an aim.
+  - It works through the same `Battle.perform_action()` the buttons use, so no combat rule is
+    rewritten.
+- **The selection screen** gains a mode choice (hot seat / vs AI) and the AI difficulty.
+- **The round limit and tie-break (§4.7)** should be added here.
+- **Not needed any more:** the HANDOVER screen (alternating turns hide nothing). The original plan
+  follows.
 - **Required features:**
   - `ai.py` (§6.3).
   - TITLE and SETUP screens (vs AI / 2 Players; difficulty).
@@ -866,7 +914,9 @@ approves.
   runs short.
 - **Q2 — Graders' Python version and OS.** This decides the pinned Pygame version and the install
   instructions.
-- **Q3 — Decisions on C1–C7 (§10.1).** C1 (simultaneous turns), C2 (castle win, Draw) and C7
+- **Q3 — Decisions on C1–C7 (§10.1).** *C1 was settled in M2.3: alternating turns.* C2
+  (castle win, Draw) and C7 (round limit) remain open. Original text: C1 (simultaneous turns),
+  C2 (castle win, Draw) and C7
   (round limit) matter most. C1 and C2 have switches (§2.3), but the default affects the tests and
   the report. For C1, please also say what "alternating turns" means: does each *side* act in turn
   (our switch), or does each *character* act in turn (a different design)?
@@ -879,7 +929,8 @@ approves.
 **PM**
 - **Q6 — M1 scope.** Approve the alternating-shot hot-seat prototype, the tower-top cannons and
   the fixed 30 block damage for M1.
-- **Q7 — Turn-mode switch.** Approve building `TURN_MODE` in M2 by default (recommended), or only
+- **Q7 — Turn-mode switch.** *Settled in M2.3: no switch; alternating turns only.* Original text:
+  approve building `TURN_MODE` in M2 by default (recommended), or only
   if the instructor requires alternating turns.
 - **Q8 — Rebalanced rules.** Approve the 75 HP Repair pool, the revised EXP table and the new
   AI noise table as starting values.
@@ -1076,3 +1127,39 @@ round *r + cooldown*, for either side.
 - **Repair** (75 HP every 4 rounds) can't keep up with one hit (200+).
 - **Risk:** if `castle_loss_enabled` is set to `False` (the course fallback, C2), matches will
   be much longer, and there is no round limit yet.
+
+### M2.3 notes (playable hot-seat interface)
+**Decisions:** see "Revision 3 — final decisions" at the top. Simultaneous turns are cancelled,
+and alternating turns are final.
+
+**Screens** (`main.Game.state`):
+- `"select"`: team size and both rosters; also starts the classic M1 duel.
+- `"battle"`
+- `"result"`: Rematch and Change teams.
+
+**Small classes:** `Button` and `TeamSelection`. `TeamSelection` holds the picks and draws nothing.
+
+**Rules stay in the engine.** The interface asks the engine and never re-implements a rule:
+- `Battle.why_not_allowed()` decides which buttons are greyed out and why;
+- `Battle.perform_action()` performs every action;
+- the event list fills the combat log.
+
+**Character positions:** these come only from `Team.character_rect()` / `slot_center()`.
+
+**Targeted engine changes, each with regression tests:**
+- `Battle._why_not_allowed` → public `why_not_allowed`;
+- `Character.special_blocked_reason(team)`: a clear reason, such as "Rally is recharging:
+  ready in 2 rounds". The Engineer override adds "nothing to repair". `can_use_special` now
+  uses it;
+- `Team.character_rect(index)`, now also used by `character_at`;
+- `characters.ARCHETYPES` and `SPECIAL_DESCRIPTION`, which are display data.
+
+The physics, collision and damage rules are unchanged.
+
+**Verification:**
+- Unit tests drive the real click and key handlers.
+- A scripted run of the unmodified `main.main()` passed all checks for 1v1, 2v2 and 3v3. The
+  input was posted into Pygame's event queue, and the screenshots were inspected.
+- Real OS mouse and keyboard input could **not** be tested this time: Windows refused the game
+  window focus. The IME probe showed the game window's input method disabled. Human
+  playtesting is still required.

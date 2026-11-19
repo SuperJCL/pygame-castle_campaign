@@ -162,9 +162,20 @@ class Character:
         """Call once at the start of every round: one round less to wait (never below 0)."""
         self._special_cooldown = max(0, self._special_cooldown - 1)
 
+    def special_blocked_reason(self, team):
+        """None if the special may be used now, otherwise a short reason why not.
+
+        Here only the cooldown matters; a subclass can add its own conditions.
+        """
+        if self._special_cooldown > 0:
+            rounds = self._special_cooldown
+            plural = "s" if rounds != 1 else ""
+            return f"{self.SPECIAL_NAME} is recharging: ready in {rounds} round{plural}"
+        return None
+
     def can_use_special(self, team):
-        """True if the special may be used now. Subclasses can add their own conditions."""
-        return self.special_ready()
+        """True if the special may be used now."""
+        return self.special_blocked_reason(team) is None
 
     def use_special(self, team):
         """Use this character's special ability for `team`. Every subclass replaces this.
@@ -220,6 +231,7 @@ class Knight(Character):
     BLOCK_DAMAGE = 50
     SPECIAL_NAME = "Rally"
     SPECIAL_COOLDOWN = 4
+    SPECIAL_DESCRIPTION = "All living allies defend until your next turn."
 
     def use_special(self, team):
         """Rally: every living ally, the Knight included, defends. Nothing is fired."""
@@ -237,6 +249,7 @@ class Archer(Character):
     BLOCK_DAMAGE = 50
     SPECIAL_NAME = "Power Shot"
     SPECIAL_COOLDOWN = 3
+    SPECIAL_DESCRIPTION = "Aimed shot: 1.5x ATK, ignores DEF, 75 per block."
     POWER_SHOT_MULTIPLIER = 1.5          # character damage = ATK x 1.5, ignoring DEF
     POWER_SHOT_BLOCK_DAMAGE = 75
 
@@ -254,13 +267,21 @@ class Engineer(Character):
     BLOCK_DAMAGE = 60
     SPECIAL_NAME = "Repair"
     SPECIAL_COOLDOWN = 4
+    SPECIAL_DESCRIPTION = "Restores up to 75 castle HP, most damaged blocks first."
     REPAIR_POOL = 75                     # castle HP restored by one Repair, at most
 
-    def can_use_special(self, team):
+    def special_blocked_reason(self, team):
         """Repair also needs something to repair (a damaged block that still stands)."""
-        return super().can_use_special(team) and team.castle.is_damaged()
+        reason = super().special_blocked_reason(team)
+        if reason is None and not team.castle.is_damaged():
+            reason = "Repair: nothing to repair (no castle block is damaged)"
+        return reason
 
     def use_special(self, team):
         """Repair: up to 75 HP back for the team's castle. Nothing is fired."""
         restored = team.castle.repair(self.REPAIR_POOL)
         return f"{self.name} uses Repair: the castle regains {restored} HP.", None
+
+
+# The three roles, in the order the team-selection screen shows them.
+ARCHETYPES = [Knight, Archer, Engineer]

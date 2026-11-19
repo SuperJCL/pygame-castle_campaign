@@ -54,13 +54,14 @@ y=720  +------------------------------------------------------------------------
 - Castles: left starts at x = 200, right starts at x = 888 (6 columns × 32 px = 192 px wide).
 - Characters: 28 × 44 px rectangles. Left slot centres x = 50, 95, 140.
   Right slot centres x = 1140, 1185, 1230. Characters stand on the ground.
-- The tall **front tower** faces the enemy and blocks flat shots. The back wall is
+- The tall **front tower** faces the enemy and blocks almost all flat shots. The back wall is
   one block high, so lobbed shots (about 45° or steeper) can land on the characters.
 
 ### 1.5 Aiming
 - Angle: 5°–80°, measured up from horizontal, always toward the enemy. Default 45°.
-- Power: 10–100. Default 60 (this lands slightly short of the enemy castle, so
-  the player has to adjust).
+- Power: 10–100. Default 60. From the middle slot this lands just short of the
+  enemy castle (x ≈ 865). From the outer slots it lands about 45 px shorter or
+  longer, so the player always has to adjust.
 - Controls: Up/Down = angle ±1°, Left/Right = power ±1, hold Shift for ±5.
 - An aim arrow shows direction, and its length shows power. There is **no** full
   trajectory preview, because aiming is the skill in this game.
@@ -101,7 +102,7 @@ TITLE ──► SETUP ──► TEAM_SELECT ──► BATTLE ──► RESULT �
 | **PLANNING** | Each side submits one `ActionPlan(actor, action, angle, power)`. The AI plans at the start of this phase and **never reads the other side's plan**. The human plans through the UI. The plans are hidden until both are submitted. Invalid plans are rejected (dead actor, special still cooling down, angle or power out of range). |
 | **RESOLVE_INSTANT** | Both plans are revealed in the log. Instant effects are applied first, left side then right side (the order doesn't matter because they only touch the team that used them): **Defend** sets `is_defending` on the actor. **Knight Rally** sets `is_defending` on every living ally. **Engineer Repair** repairs the castle. Specials start their cooldowns here. Then **both projectiles are launched** (Attack, or Archer Power Shot). |
 | **FLIGHT** | Each frame, every flying projectile advances the same number of fixed physics steps. When a projectile collides, it **explodes immediately** and its damage is applied right away (§4.4). A character killed mid-flight can't be hit again, but a shot it already fired keeps flying, because both shots were launched together. FLIGHT ends when no projectile is still flying. |
-| **ROUND_END** | Award EXP and process level-ups. Check loss conditions for **both** teams at the same time: neither has lost → ROUND_START; one has lost → the other wins; both have lost → Draw; round 30 reached → tie-break (§1.2). |
+| **ROUND_END** | Award EXP to the actor if it is still alive, and process level-ups. Check loss conditions for **both** teams at the same time: neither has lost → ROUND_START; one has lost → the other wins; both have lost → Draw; round 30 reached → tie-break (§1.2). |
 
 PvP adds **no battle phases**. Its hot-seat steps happen only in the UI, inside
 PLANNING: `PLAN_LEFT → HANDOVER ("Player 2, press Space") → PLAN_RIGHT`.
@@ -145,7 +146,9 @@ ROUND_START lowers it by 1 each round.) Every special starts ready.
 not allowed in M1 (see §9, A3).
 
 ### 3.3 EXP and levels
-Only the character that acted this round earns EXP:
+Only the character that acted this round earns EXP, and only if it is **still
+alive at ROUND_END**. A defeated character earns no EXP and can never be
+revived by a level-up.
 - +5 for taking any action
 - +10 more if its projectile damaged at least one enemy block or character
 - +20 more for each enemy character its projectile defeated
@@ -188,14 +191,14 @@ Blocks have no DEF and cannot defend. Level 1 values: Knight 30, Archer 30,
 Engineer 51. Archer Power Shot: int(40 × 1.5 × 0.75) = 45.
 
 ### 4.4 Explosions (one rule for everything)
-When a projectile hits an enemy character's rectangle, an enemy block's
-rectangle, or the ground, or flies past the left or right screen edge, it stops.
-At the impact point (for ground or block hits):
+When a projectile enters an enemy character's rectangle or an enemy block's
+rectangle, or reaches the ground, it **explodes** at that point. All three
+cases use the same rule. At the impact point:
 - every **enemy** character whose centre is within **50 px** takes character damage (§4.1)
 - every **enemy** block whose centre is within **50 px** takes block damage (§4.3)
 
 There is **no friendly fire.** A projectile passes through its own team's castle
-and characters. A shot that leaves the screen sideways, or is still flying after
+and characters. A shot that leaves the screen sideways (no explosion), or is still flying after
 600 steps (10 s), is a miss. Shots may go above the top of the screen (y < 0) and
 come back down. The UI draws a small marker at the top edge while a shot is out of view.
 
@@ -216,8 +219,8 @@ A typical hit on a castle face damages **3–4 blocks** (checked in §12).
   This gives 15 blocks, 1500 HP in total. Front tower height = 160 px. Back wall height = 32 px.
 - `destruction % = 100 × (1 − current total block HP / max total block HP)`.
   This counts damage, not destroyed blocks, so every hit moves the bar.
-- **Loss at ≥ 60 %**, which is 900 HP of damage. At Level 1 that's about 8–9
-  Knight hits or 5–6 Engineer hits.
+- **Loss at ≥ 60 %**, which is 900 HP of damage. At Level 1 that's about 8–10
+  Knight hits (90–120 damage each) or 5–6 Engineer hits.
 - Blocks do **not** fall when the block below them is destroyed. This is an
   accepted simplification (§9, R4).
 
@@ -448,7 +451,18 @@ pytest isn't required, but it can run these tests too.
   M2, short sounds generated with the standard library or CC0 files listed in
   `assets/CREDITS.md`. No unlicensed assets.
 
-### 9.3 Implementation risks
+### 9.3 Open questions only the PM / instructor can answer
+- **Q1 — Course rubric and due dates.** This design paraphrases the course
+  requirements. Please confirm the §8 mapping against the actual rubric
+  (for example: is a written report required? save files?). Please also give
+  the milestone due dates, which decide what M1 can drop if time is short.
+- **Q2 — Graders' Python version and OS.** This decides the pinned Pygame
+  version and the install instructions.
+- **Q3 — Decisions on C1–C5 and A1–A6 above.** C1 (simultaneous turns) and C2
+  (castle win and Draw) matter most. If either is rejected, the battle phases,
+  when the AI plans, and the victory tests all change.
+
+### 9.4 Implementation risks
 - **R1 — Physics tunnelling.** Fast shots could skip through a 28 px
   character. At ≤ 900 px/s and 60 steps/s a shot moves ≤ 15 px per step, which
   is safe for 28–32 px targets. Keep `SPEED_PER_POWER × 100 / 60 < 28`.
@@ -461,7 +475,8 @@ pytest isn't required, but it can run these tests too.
   destroyed blocks. This is documented as an accepted simplification.
 - **R5 — Pygame availability.** Pygame isn't installed in this design
   environment. The M1 README must pin a version (e.g. `pygame==2.6.1`) and the
-  logic tests must not import Pygame.
+  logic tests must not import Pygame. We need the graders' Python version and
+  OS (Q2) to pick a version that has a ready-made wheel for them.
 - **R6 — Hot-seat fairness (PvP).** The HANDOVER screen must hide Player 1's
   angle and power. That's UI-only work.
 - **R7 — Balance.** All numbers are first guesses. Target: an average PvAI
@@ -484,7 +499,9 @@ Order (test-first for the logic modules):
 2. `characters.py` + `test_characters.py`: damage formula (including defend and minimum 1), cooldown timing, level-up.
 3. `castle.py` + `test_castle.py`: template build and mirroring, blast radius, destruction %, repair cap.
 4. `battle.py` + `test_battle.py`: physics determinism; a known shot lands in a known x-range; simultaneous round with a mutual kill giving a Draw; castle-60 % and elimination wins; invalid plans rejected; round-30 tie-break.
-5. `ai.py` + `test_ai.py`: `aim_power` accuracy (simulated impact within 25 px); defensive preference with a seeded RNG; the AI never reads opponent plans; an AI-vs-AI match ends within 30 rounds for all difficulties.
+5. `ai.py` + `test_ai.py`: `aim_power` accuracy (simulated impact within 25 px); defensive preference with a seeded RNG; the AI never reads opponent plans; with fixed seeds, AI-vs-AI matches on every difficulty end by castle
+   destruction or elimination **before** the round-30 cap. ("Ends within 30
+   rounds" can't fail because of the cap, so it isn't the test.)
 6. `main.py`: screens, aiming input, flight animation, HUD, log, result screen.
 7. Manual playtest checklist (in the README) and first tuning pass.
 
@@ -516,14 +533,26 @@ Rough size: characters ~150 lines, castle ~100, battle ~250, ai ~150, main ~450�
 
 ## 12. Process log (M0)
 
-- **Start:** 2026-11-19T04:22:11Z. **End:** recorded in the review message.
+- **Start:** 2026-11-19T04:22:11Z. **End:** 2026-11-19T04:35:04Z.
+- **Independent review:** a fresh reviewer agent read this document as a builder
+  would and re-ran the physics. Fixed from its report:
+  - a level-up could revive a dead character (now: defeated characters earn no EXP)
+  - direct character hits weren't covered by the explosion rule
+  - the default-shot landing point depends on the slot
+  - "8–9 hits" corrected to "8–10"
+  - small drift in the §12 figures
+  - an AI-vs-AI test that could never fail
+  Its open questions are now Q1–Q3 in §9.3.
 - **Files created:** `docs/M0_design.md` (this file). No game code.
 - **Checks performed (throwaway, not committed):** a ~60-line Python script
   simulated the §4.6 physics against the §4.5 castle layout. Results:
   - Default 45°/power 60 lands at x ≈ 865, just short of the enemy castle (x = 888).
-  - 30° shots at the characters hit the front tower, so the shield works.
-  - 45–60° lobs reach every character slot with power 71–80. Peak height stays on screen (y ≥ 35) for angles up to 60°.
-  - Closed-form aim lands within 8–18 px of the target under the Euler simulation.
+  - 30° shots at the characters hit the front tower in almost all cases, so the
+    shield works. (A second check found one narrow power band, about 79–82,
+    that still reaches a character.)
+  - 45–60° lobs reach every character slot with power of about 69–82. Peak height stays on screen (y ≥ 35) for angles up to 60°.
+  - Closed-form aim lands within about 7–19 px of the target under the Euler
+    simulation, well inside the 50 px blast radius.
   - Blasts on the castle face hit 3–4 blocks.
   - Flights last 88–187 frames.
   - A 400-sample Monte Carlo per difficulty gave the hit rates in §6.3.

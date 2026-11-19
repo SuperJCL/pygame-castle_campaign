@@ -58,6 +58,17 @@ class Block:
         self._hp -= dealt
         return dealt
 
+    def restore(self, amount):
+        """Regain up to `amount` HP (never above max_hp). Returns the HP actually regained.
+
+        A destroyed block stays destroyed: repairs can't bring it back.
+        """
+        if self.is_destroyed():
+            return 0
+        gained = min(amount, self.max_hp - self._hp)
+        self._hp += gained
+        return gained
+
 
 class Castle:
     """A castle made of blocks, built from TEMPLATE for the "left" or "right" side."""
@@ -112,6 +123,25 @@ class Castle:
                 blocks_hit += 1
                 total_damage += block.take_damage(damage)
         return blocks_hit, total_damage
+
+    def is_damaged(self):
+        """True if some surviving block has lost HP, so a repair would do something."""
+        return any(block.hp < block.max_hp for block in self.alive_blocks())
+
+    def repair(self, pool):
+        """Share out up to `pool` HP among damaged surviving blocks. Returns the HP restored.
+
+        The most damaged block (lowest HP) is repaired first; for equal HP the
+        leftmost, then the highest block goes first. HP that no block needs is lost.
+        """
+        restored = 0
+        for block in sorted(self.alive_blocks(), key=lambda b: (b.hp, b.x, b.y)):
+            if pool <= 0:
+                break
+            gained = block.restore(pool)
+            pool -= gained
+            restored += gained
+        return restored
 
     def total_hp(self):
         return sum(block.hp for block in self._blocks)

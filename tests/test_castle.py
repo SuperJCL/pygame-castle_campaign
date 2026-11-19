@@ -96,6 +96,45 @@ class BlastTest(unittest.TestCase):
         self.assertEqual(castle.apply_blast(888, 544, radius=50, damage=30), (2, 60))
 
 
+class RepairTest(unittest.TestCase):
+    def test_repair_heals_the_most_damaged_blocks_first_and_skips_destroyed_ones(self):
+        # docs/M0_design.md §3.4 example: HP [100, 40, 70, 0] -> [100, 100, 85, 0].
+        castle = Castle("left")
+        full, low, mid, gone = castle.blocks[:4]
+        low.take_damage(60)                     # 40 HP
+        mid.take_damage(30)                     # 70 HP
+        gone.take_damage(100)                   # destroyed
+        self.assertEqual(castle.repair(75), 75)  # 60 to the 40-HP block, 15 to the 70-HP block
+        self.assertEqual([b.hp for b in (full, low, mid, gone)], [100, 100, 85, 0])
+        self.assertTrue(gone.is_destroyed())
+        self.assertEqual(len(castle.alive_blocks()), 14)
+
+    def test_repair_never_goes_above_full_health(self):
+        castle = Castle("left")
+        a, b = castle.blocks[:2]
+        a.take_damage(10)                       # 90 HP
+        b.take_damage(5)                        # 95 HP
+        self.assertEqual(castle.repair(75), 15)  # only 15 HP were missing; the rest is lost
+        self.assertEqual((a.hp, b.hp), (100, 100))
+
+    def test_repair_ties_go_to_the_leftmost_block(self):
+        castle = Castle("left")
+        leftmost = castle.block_at(210, 540)    # block (200, 528)
+        tower_top = castle.block_at(370, 410)   # block (360, 400)
+        leftmost.take_damage(50)
+        tower_top.take_damage(50)
+        castle.repair(30)
+        self.assertEqual((leftmost.hp, tower_top.hp), (80, 50))
+
+    def test_only_damaged_surviving_blocks_count_as_repairable(self):
+        castle = Castle("left")
+        self.assertFalse(castle.is_damaged())
+        castle.blocks[0].take_damage(100)       # destroyed blocks can't be repaired
+        self.assertFalse(castle.is_damaged())
+        castle.blocks[1].take_damage(1)
+        self.assertTrue(castle.is_damaged())
+
+
 class DestructionTest(unittest.TestCase):
     def test_castle_falls_at_exactly_60_percent(self):
         castle = Castle("left")

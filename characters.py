@@ -1,10 +1,11 @@
 """Characters for Castle Siege: the Character base class and the Knight, Archer
-and Engineer subclasses (M2.1).
+and Engineer subclasses.
 
 The base class holds every rule the three roles share: health, damage, defending,
 the special-ability cooldown, EXP and levels. Each subclass only sets its own
-starting numbers and its own special ability. This module uses only the Python
-standard library (no Pygame), so it can be tested without a window.
+numbers and its own special ability. Characters never manage the whole battle:
+battle.py decides whose turn it is and fires the cannon. This module uses only
+the Python standard library (no Pygame), so it can be tested without a window.
 """
 
 MAX_LEVEL = 5
@@ -14,19 +15,39 @@ LEVEL_UP_ATK = 3            #                +3 ATK
 LEVEL_UP_DEF = 1            #                +1 DEF
 
 
-def calculate_damage(attack, defense, defending):
+def calculate_damage(attack, defense, defending, multiplier=1.0, ignores_def=False):
     """Damage one hit does to a character.
 
-        damage = attack - defense, but at least 1
+        damage = attack x multiplier (rounded down), minus defense unless ignores_def
+        damage = at least 1
         if the target is defending: damage = damage // 2, but still at least 1
 
-    The minimum of 1 means a hit that connects always hurts a little, even when
-    DEF is higher than ATK. Halving uses whole numbers and rounds down (21 -> 10).
+    A normal Attack uses multiplier 1.0, so it is simply ATK - DEF. Archer's Power
+    Shot uses multiplier 1.5 and ignores DEF. The minimum of 1 means a hit that
+    connects always hurts a little. Halving rounds down (21 -> 10).
+
+    The instructor's reference formula is ATK - DEF + a random number from -5 to 10.
+    We leave out the random part on purpose: the same hit always does the same
+    damage, so it can be tested with exact numbers. (On average the reference
+    formula does 2.5 more damage per hit.)
     """
-    damage = max(1, attack - defense)
+    damage = int(attack * multiplier)
+    if not ignores_def:
+        damage -= defense
+    damage = max(1, damage)
     if defending:
         damage = max(1, damage // 2)
     return damage
+
+
+class ShotDamage:
+    """How hard one cannon shot hits: damage to each castle block in the blast, and
+    how its damage to characters is worked out (see calculate_damage)."""
+
+    def __init__(self, block_damage, multiplier=1.0, ignores_def=False):
+        self.block_damage = block_damage
+        self.multiplier = multiplier
+        self.ignores_def = ignores_def
 
 
 class Character:
@@ -40,6 +61,7 @@ class Character:
     BASE_HP = None
     BASE_ATK = None
     BASE_DEF = None
+    BLOCK_DAMAGE = None         # damage to each castle block hit by this character's Attack
     SPECIAL_NAME = None
     SPECIAL_COOLDOWN = 0        # rounds to wait after using the special
 
@@ -106,10 +128,18 @@ class Character:
         self._hp -= lost
         return lost
 
-    def take_hit(self, attacker):
-        """Be hit by `attacker`: work out the damage with calculate_damage(), then take it."""
-        damage = calculate_damage(attacker.atk, self._defense, self._is_defending)
+    def take_hit(self, attacker, multiplier=1.0, ignores_def=False):
+        """Be hit by `attacker`: work out the damage with calculate_damage(), then take it.
+
+        The attacker's current ATK is used, so a level-up makes later hits stronger.
+        """
+        damage = calculate_damage(attacker.atk, self._defense, self._is_defending,
+                                  multiplier, ignores_def)
         return self.take_damage(damage)
+
+    def attack_shot(self):
+        """The cannon shot this character fires with a normal Attack."""
+        return ShotDamage(self.BLOCK_DAMAGE)
 
     # ----- defending -----------------------------------------------------------
 
@@ -132,10 +162,16 @@ class Character:
         """Call once at the start of every round: one round less to wait (never below 0)."""
         self._special_cooldown = max(0, self._special_cooldown - 1)
 
-    def use_special(self):
-        """Use this character's special ability. Every subclass replaces this method.
+    def can_use_special(self, team):
+        """True if the special may be used now. Subclasses can add their own conditions."""
+        return self.special_ready()
 
-        In M2.1 it only describes the ability; its effect on the battle comes in M2.2.
+    def use_special(self, team):
+        """Use this character's special ability for `team`. Every subclass replaces this.
+
+        Returns (message, shot): a sentence for the combat log, and a ShotDamage if
+        the battle should fire the cannon for this special (None if nothing is fired).
+        The battle checks can_use_special() first and starts the cooldown.
         """
         raise NotImplementedError(f"{type(self).__name__} has no special ability")
 
@@ -181,11 +217,16 @@ class Knight(Character):
     BASE_HP = 140
     BASE_ATK = 30
     BASE_DEF = 12
+    BLOCK_DAMAGE = 50
     SPECIAL_NAME = "Rally"
     SPECIAL_COOLDOWN = 4
 
-    def use_special(self):
-        return f"{self.name} uses Rally: every living ally defends until the team's next turn."
+    def use_special(self, team):
+        """Rally: every living ally, the Knight included, defends. Nothing is fired."""
+        allies = team.alive_characters()
+        for ally in allies:
+            ally.defend()
+        return f"{self.name} uses Rally: {len(allies)} allies are defending.", None
 
 
 class Archer(Character):
@@ -193,11 +234,16 @@ class Archer(Character):
     BASE_HP = 90
     BASE_ATK = 40
     BASE_DEF = 4
+    BLOCK_DAMAGE = 50
     SPECIAL_NAME = "Power Shot"
     SPECIAL_COOLDOWN = 3
+    POWER_SHOT_MULTIPLIER = 1.5          # character damage = ATK x 1.5, ignoring DEF
+    POWER_SHOT_BLOCK_DAMAGE = 75
 
-    def use_special(self):
-        return f"{self.name} uses Power Shot: an aimed shot with 1.5x damage that ignores DEF."
+    def use_special(self, team):
+        """Power Shot: an aimed cannon shot that hits harder. The battle fires it."""
+        shot = ShotDamage(self.POWER_SHOT_BLOCK_DAMAGE, self.POWER_SHOT_MULTIPLIER, ignores_def=True)
+        return f"{self.name} uses Power Shot!", shot
 
 
 class Engineer(Character):
@@ -205,8 +251,16 @@ class Engineer(Character):
     BASE_HP = 110
     BASE_ATK = 34
     BASE_DEF = 8
+    BLOCK_DAMAGE = 60
     SPECIAL_NAME = "Repair"
     SPECIAL_COOLDOWN = 4
+    REPAIR_POOL = 75                     # castle HP restored by one Repair, at most
 
-    def use_special(self):
-        return f"{self.name} uses Repair: the castle regains up to 75 HP."
+    def can_use_special(self, team):
+        """Repair also needs something to repair (a damaged block that still stands)."""
+        return super().can_use_special(team) and team.castle.is_damaged()
+
+    def use_special(self, team):
+        """Repair: up to 75 HP back for the team's castle. Nothing is fired."""
+        restored = team.castle.repair(self.REPAIR_POOL)
+        return f"{self.name} uses Repair: the castle regains {restored} HP.", None

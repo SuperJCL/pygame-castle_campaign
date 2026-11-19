@@ -8,9 +8,16 @@ import subprocess
 import sys
 import unittest
 
+from battle import Team
+from castle import Castle
 from characters import Archer, Character, Engineer, Knight, calculate_damage
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def make_team(*characters, side="left"):
+    """A real Team (with its own fresh castle) for the given characters."""
+    return Team(side, list(characters), Castle(side))
 
 
 class InitialAttributesTest(unittest.TestCase):
@@ -101,6 +108,18 @@ class DamageTest(unittest.TestCase):
     def test_halving_rounds_down_and_still_does_at_least_1(self):
         self.assertEqual(calculate_damage(33, 12, defending=True), 10)   # 21 / 2 = 10.5 -> 10
         self.assertEqual(calculate_damage(5, 12, defending=True), 1)     # 1 / 2 would be 0
+
+    def test_power_shot_ignores_def_then_defend_still_halves_it(self):
+        # Archer ATK 40 x 1.5 = 60, Knight DEF 12 ignored; defending -> 30.
+        self.assertEqual(calculate_damage(40, 12, False, multiplier=1.5, ignores_def=True), 60)
+        self.assertEqual(calculate_damage(40, 12, True, multiplier=1.5, ignores_def=True), 30)
+        knight = Knight("K", "right")
+        self.assertEqual(knight.take_hit(Archer("A", "left"), multiplier=1.5, ignores_def=True), 60)
+        self.assertEqual(knight.hp, 80)
+
+    def test_power_shot_multiplier_rounds_down(self):
+        # A level-2 Archer has ATK 43: 43 x 1.5 = 64.5 -> 64.
+        self.assertEqual(calculate_damage(43, 12, False, multiplier=1.5, ignores_def=True), 64)
 
     def test_defend_status_can_be_cleared(self):
         archer, knight = Archer("A", "left"), Knight("K", "right")
@@ -201,14 +220,46 @@ class ExperienceTest(unittest.TestCase):
         self.assertEqual((rookie.max_hp, rookie.atk, rookie.defense), (140, 30, 12))
 
 
+class AttackShotTest(unittest.TestCase):
+    def test_each_role_has_its_own_castle_damage(self):
+        for role, block_damage in ((Knight, 50), (Archer, 50), (Engineer, 60)):
+            with self.subTest(role=role.__name__):
+                shot = role("X", "left").attack_shot()
+                self.assertEqual((shot.block_damage, shot.multiplier, shot.ignores_def),
+                                 (block_damage, 1.0, False))
+
+    def test_castle_damage_does_not_grow_with_level(self):
+        knight = Knight("K", "left")
+        knight.gain_exp(90)                            # level 3
+        self.assertEqual(knight.attack_shot().block_damage, 50)
+
+
 class SpecialAbilityTest(unittest.TestCase):
-    def test_each_role_has_its_own_special(self):
-        # The same call works on any character; each class answers in its own way.
-        party = [Knight("K", "left"), Archer("A", "left"), Engineer("E", "left")]
-        messages = [character.use_special() for character in party]
-        for message, name in zip(messages, ("Rally", "Power Shot", "Repair")):
-            self.assertIn(name, message)
-        self.assertEqual(len(set(messages)), 3)
+    def test_knight_rally_makes_every_living_ally_defend(self):
+        knight, archer, engineer = Knight("K", "left"), Archer("A", "left"), Engineer("E", "left")
+        archer.take_damage(90)                         # defeated allies are skipped
+        message, shot = knight.use_special(make_team(knight, archer, engineer))
+        self.assertIn("Rally", message)
+        self.assertIsNone(shot)                        # Rally fires nothing
+        self.assertTrue(knight.is_defending)           # the Knight defends too
+        self.assertTrue(engineer.is_defending)
+        self.assertFalse(archer.is_defending)
+
+    def test_archer_power_shot_returns_a_stronger_shot_to_fire(self):
+        archer = Archer("A", "left")
+        message, shot = archer.use_special(make_team(archer))
+        self.assertIn("Power Shot", message)
+        self.assertEqual((shot.block_damage, shot.multiplier, shot.ignores_def), (75, 1.5, True))
+
+    def test_engineer_repair_fixes_the_team_castle(self):
+        engineer = Engineer("E", "left")
+        team = make_team(engineer)
+        team.castle.blocks[0].take_damage(60)
+        team.castle.blocks[1].take_damage(30)          # 90 HP missing
+        message, shot = engineer.use_special(team)
+        self.assertIn("Repair", message)
+        self.assertIsNone(shot)
+        self.assertEqual(team.castle.total_hp(), 1500 - 90 + 75)
 
     def test_every_role_overrides_use_special(self):
         for role in (Knight, Archer, Engineer):
@@ -219,7 +270,23 @@ class SpecialAbilityTest(unittest.TestCase):
         class Recruit(Character):                      # forgets to define use_special
             BASE_HP, BASE_ATK, BASE_DEF = 50, 10, 2
         with self.assertRaises(NotImplementedError):
-            Recruit("R", "left").use_special()
+            Recruit("R", "left").use_special(make_team(Knight("K", "left")))
+
+
+class SpecialAvailabilityTest(unittest.TestCase):
+    def test_a_special_needs_its_cooldown_to_be_over(self):
+        knight = Knight("K", "left")
+        team = make_team(knight)
+        self.assertTrue(knight.can_use_special(team))
+        knight.start_cooldown()
+        self.assertFalse(knight.can_use_special(team))
+
+    def test_repair_also_needs_a_damaged_surviving_block(self):
+        engineer = Engineer("E", "left")
+        team = make_team(engineer)
+        self.assertFalse(engineer.can_use_special(team))   # nothing to repair yet
+        team.castle.blocks[0].take_damage(10)
+        self.assertTrue(engineer.can_use_special(team))
 
 
 class PygameIndependenceTest(unittest.TestCase):

@@ -317,12 +317,20 @@ Examples (Level 1):
 - Defend never reduces castle damage (§2.4 rule 2).
 
 ### 4.3 Damage to castle blocks (one explosion)
-```
-block_damage = int(attacker.atk * shot_multiplier * attacker.BLOCK_DAMAGE_MULT)   # M2+
-block_damage = SHOT_BLOCK_DAMAGE = 50                                             # M1 (no characters; 30 until M1.1)
-```
-Blocks have no DEF and cannot defend. Level 1 values: Knight 30, Archer 30, Engineer 51,
-Archer Power Shot int(40 × 1.5 × 0.75) = 45.
+Each shot deals a fixed amount to every enemy block in the blast (since M2.2; it no longer
+depends on ATK or level):
+
+| Shot | Damage per block |
+|---|---|
+| M1 cannon duel (no characters) | 50 (`SHOT_BLOCK_DAMAGE`; 30 until M1.1) |
+| Knight Attack | 50 |
+| Archer Attack | 50 |
+| Engineer Attack | 60 |
+| Archer Power Shot | 75 |
+
+Blocks have no DEF and cannot defend. (Revision 2 used `int(atk × multiplier ×
+BLOCK_DAMAGE_MULT)`, which gave a Knight 30 per block. That brought back the slow pacing
+M1.1 fixed, so M2.2 replaced it with these values.)
 
 ### 4.4 Explosions (one rule for everything)
 When a projectile enters an enemy character's rectangle or an enemy block's rectangle, or reaches
@@ -389,11 +397,18 @@ At the end of round `ROUND_LIMIT` (30), if nobody has lost, compare in order:
 Putting the characters first matches the course's elimination victory, and it works in every mode.
 
 ### 4.8 Alignment with the course's examples (damage and EXP)
-We don't have the course's example formulas in the repository (§13, Q1), so we can't claim to
-match them. What we can say:
-- Our damage formula follows the common pattern *damage = ATK − DEF (minimum 1)*. The course rule
-  "Defend reduces incoming damage by 50 %" is applied after DEF, to the defending character only
-  (§10, C5).
+**Damage (updated in M2.2):** the instructor's reference formula is
+*Damage = ATK − DEF + a random integer from −5 to 10*. Ours is deliberately **deterministic**:
+*ATK − DEF*, minimum 1, halved when defending (Archer's Power Shot: ATK × 1.5, ignoring DEF).
+- *Why:* the same hit always does the same damage, so the tests can check exact numbers.
+- *Effect:* the reference formula does 2.5 more damage per hit on average, and varies by up to
+  15 points between hits.
+- *To match it:* add the random term inside `calculate_damage` (one line), with a seeded
+  random generator for the tests.
+- The course rule "Defend reduces incoming damage by 50 %" is applied after DEF, to the
+  defending character only (§10, C5).
+
+What still isn't known (§13, Q1):
 - EXP uses fixed rewards and a linear level threshold. The course requires the EXP and Level
   attributes; it doesn't fix their numbers, as far as we know.
 - Each formula lives in exactly one function (`calculate_damage`, `Character.gain_exp`). If the
@@ -1018,3 +1033,46 @@ likely to differ from a course example:
 2. halving after DEF rather than before;
 3. rounding down to whole numbers.
 Each would be a one-line change in `calculate_damage`.
+
+### M2.2 notes (team combat in `battle.py`)
+**What was built.** `Team` and one `Battle` engine with two modes:
+- `Battle()` is the unchanged M1 cannon duel that `main.py` still uses;
+- `Battle(roster=..., castle_loss_enabled=True)` adds team combat through
+  `perform_action(slot, "attack" | "defend" | "special")`.
+
+Turns still alternate (left, then right); the simultaneous mode isn't built yet. The physics,
+cannon geometry and collision rules are unchanged. Explosions now also hit enemy characters
+within 50 px, and a shot also explodes when it enters an enemy character's 28 × 44 rectangle.
+
+**Exactly when Defend expires.** A team's Defend (and Rally) flags are cleared at the very start
+of that team's next turn, so they protect against exactly one enemy action. Cooldowns tick once
+per round, when the left side's turn begins. So a special used in round *r* is ready again in
+round *r + cooldown*, for either side.
+
+**Departures from this document:**
+- **Castle damage** is a fixed value per role (§4.3): 50 / 50 / 60, and 75 for Power Shot.
+  This replaces the `BLOCK_DAMAGE_MULT` formula and settles the open conflict from the M2.1
+  notes. It doesn't grow with level.
+- **Specials:** `use_special(team)` returns `(message, shot)`. Knight and Engineer apply their
+  effect directly and return no shot; Archer returns a stronger `ShotDamage` for the battle to
+  fire. `can_use_special(team)` is new; the Engineer overrides it, because Repair needs a
+  damaged block. `ShotDamage` is a small new value class.
+- **Actions:** `perform_action` replaces `ActionPlan` / `submit_plan` while turns alternate.
+  `ActionPlan` will come with the simultaneous mode.
+- **Slots:** slot 0 is the one nearest the team's own castle, so the left slots are x = 140,
+  95, 50 (the mirror of the right slots 1140, 1185, 1230). §1.4 lists the same positions, in
+  the opposite order on the left.
+- **Not built yet:** the round limit and tie-break (§4.7, C7), the AI, and anything on screen.
+
+**Balance at Level 1** (from the stats; worked out by hand):
+- **Characters:** a hit deals 18–36 damage, so defeating one takes 3–8 hits. For example, an
+  Archer needs 5 hits to beat a Knight, and a Knight needs 4 to beat an Archer. A Power Shot
+  deals 60 to anyone.
+- **Splash:** a blast can reach 2–3 characters standing next to each other.
+- **Castle:** a 4-block tower hit deals 200 (Knight/Archer), 240 (Engineer) or 300 (Power
+  Shot), so a castle still falls in about 4–6 good hits, as in M1.1.
+- **Which victory comes first:** the castle is usually faster than wiping out a team. A team
+  has 90–340 HP in total, and hitting characters needs harder lob shots.
+- **Repair** (75 HP every 4 rounds) can't keep up with one hit (200+).
+- **Risk:** if `castle_loss_enabled` is set to `False` (the course fallback, C2), matches will
+  be much longer, and there is no round limit yet.

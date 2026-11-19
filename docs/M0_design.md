@@ -1,9 +1,10 @@
 # Castle Siege — M0 Requirements and Architecture
 
-Status: **Revision 3 (M2.3), updated for M3.2.** This is the living design document. The game is
-implemented up to M3.2 (Player vs AI, two-player hot seat, and the M3.2 balance changes).
-Revision 3's final decisions and the M3.2 rule changes, just below, override anything older in
-this document. The AI that was built differs from the plan in §6.3; see §14, "M3.1 notes".
+Status: **Revision 3 (M2.3), updated for M3.3.** This is the living design document. The game is
+implemented up to M3.3 (Player vs AI, two-player hot seat, the M3.2 balance changes and the M3.3
+round limit and match flow). Revision 3's final decisions and the M3.2 / M3.3 rule changes, just
+below, override anything older in this document. The AI that was built differs from the plan in
+§6.3; see §14, "M3.1 notes". The course-compliance checklist is `docs/M3.3_course_compliance.md`.
 
 ### Revision 3 — final decisions (made by the PM and the user in M2.3)
 - **Alternating turns are the final design. Simultaneous turns are cancelled.** The left team
@@ -32,6 +33,20 @@ this document. The AI that was built differs from the plan in §6.3; see §14, "
 - **Kept:** the 60 % castle threshold, character Defend (half damage, minimum 1), the cooldowns,
   one action per team turn, the stats and the physics.
 - Human play-testing of these rules is still pending.
+
+### M3.3 — final game rules and flow
+- **Round limit (our design rule, not an instructor number):** a team match ends after
+  `ROUND_LIMIT = 30` complete rounds (both teams have acted, whichever side started). Ordinary
+  elimination and castle wins are checked first, even on the last turn. Then the tie-breakers
+  decide (§4.7); if all are equal, it is a draw. The M1 duel has no limit.
+- **First mover:** `Battle(first_side=...)` / `Battle.reset(first_side=...)`. LEFT starts the first
+  match. Each rematch (button or R) swaps the first mover; new teams start with LEFT again. The M1
+  duel always starts with LEFT. A round starts whenever the first mover is to act, so cooldowns
+  still tick once per round, and Defend still ends at the defending team's next turn.
+- **Castle Guard indicator:** a blue outline on the guarded castle's blocks and a GUARDED badge.
+  It is drawn straight from `Battle.castle_guarded(side)` every frame.
+- **Result screen:** the winner or DRAW, the reason (elimination, castle, round-limit tie-break
+  and its rule, or a true draw) and the rounds played. The HUD shows "Round N / 30".
 
 Revision 2's original header: *draft for project-manager review; M0 design only.*
 
@@ -434,14 +449,24 @@ each step:  vy += GRAVITY*DT ;  x += vx*DT ;  y += vy*DT ;  then check collision
   so changing `SPEED_PER_POWER` or `GRAVITY` too far fails loudly. (Idea adapted from Rebound's
   sub-stepping rule; review §3.2.)
 
-### 4.7 Round-limit tie-break
-At the end of round `ROUND_LIMIT` (30), if nobody has lost, compare in order:
+### 4.7 Round-limit tie-break (final rule, built in M3.3)
+A team match ends after `ROUND_LIMIT` (30) **complete** rounds. A round is complete once both
+teams have acted, whichever side started, so a match never ends after only the first team's turn
+of round 30. Ordinary wins (elimination, castle) are checked first, after every action, so a win
+on the very last turn beats the tie-break. If nobody has won, compare in order
+(`Battle.tie_break`):
 1. more **living characters** wins;
-2. else more **total HP of living characters** wins;
-3. else **lower castle destruction %** wins (this step is skipped when `CASTLE_LOSS_ENABLED` is `False`);
-4. else it is a Draw.
+2. else a higher **share of character HP** wins: the team's total HP ÷ its total *current* max HP,
+   defeated characters included (their HP counts 0, their max HP counts in full);
+3. else more **castle HP left**, as a share of the castle's max HP, wins (also compared when
+   castle loss is switched off);
+4. else it is a **draw**.
 
-Putting the characters first matches the course's elimination victory, and it works in every mode.
+Shares are compared exactly by cross-multiplying (a/b > c/d exactly when a·d > c·b), so
+floating-point rounding can never decide a match. Putting the characters first matches the
+course's elimination victory. This is our design rule; the number 30 is not an instructor
+requirement (§10.1, C7). *Until M3.3 this section described a draft: total HP of living
+characters only, and the castle step skipped when castle loss was off.*
 
 ### 4.8 Alignment with the course's examples (damage and EXP)
 **Damage (updated in M2.2):** the instructor's reference formula is
@@ -694,7 +719,9 @@ of the PM's list of important requirements.
 | Character selection | `TEAM_SELECT` screen, `ARCHETYPES`, `AIController.pick_team` | M2 (AI's pick in M3.1) | test_main; test_ai (`pick_team(size)` returns `size` different roles) |
 | HP bars, action buttons, combat log, result screen | `Game.draw_*`, `Button`, `Battle.log`, `RESULT` state | M2 (basic), M4 (polish) | manual checklist; test_battle (log entries) |
 | Alternating turns (simultaneous resolution cancelled in M2.3) | `Battle._finish_turn`, `_start_round`, `_start_turn` | M2.2 | test_combat (turn order, cooldowns once per round, Defend covers exactly one enemy turn) |
-| Elimination victory, castle victory, Draw, tie-break | `Team.has_lost`, `end_round`, `castle_loss_enabled`, §4.7 | M2 | test_battle (both values of `castle_loss_enabled`) |
+| Elimination victory, castle victory, Draw, tie-break | `Team.has_lost`, `Battle.check_winner`, `Battle.tie_break`, `castle_loss_enabled`, `ROUND_LIMIT`, §4.7 | M2, M3.3 | test_combat VictoryTest, RoundLimitTest (both sides first, every tie-breaker, exact ties, a last-turn win beats the tie-break) |
+| Alternating first mover on rematch | `Battle(first_side=...)`, `Battle.reset(first_side=...)`, `Game.rematch` | M3.3 | test_combat FirstMoverTest (rounds, cooldowns, Defend / Rally with RIGHT first); test_main RematchAndFirstMoverTest (alternation, the AI moving first, PvP) |
+| Castle Guard indicator, result screen | `Game.draw_castle_guard`, `guard_badge_rect`, `Game.result_reason`, `result_rounds` | M3.3 | test_main CastleGuardIndicatorTest, ResultReasonTest |
 | Engineer Repair (capped) | `Castle.repair`, `Block.restore`, `Engineer.REPAIR_POOL` (150 since M3.2) | M2, M3.2 | test_castle (pool examples of §3.4, no revival, no overheal); test_combat and test_main (150 through the real battle and buttons) |
 | Enemy AI, defensive preference below 50 % HP | `AIController.wants_to_defend`, `defensive_plan` | M3.1 | test_ai (seeded rate check: below half HP vs not; never two defensive turns in a row) |
 | AI difficulty Easy / Normal / Hard | `ai.DIFFICULTY_SETTINGS` | M3.1 | test_ai (seeded: Hard hits more often than Easy; whole matches end at every size and level) |
@@ -716,10 +743,10 @@ of the PM's list of important requirements.
 | **C1** | Alternating turns | **Yes, since M2.3.** The teams act one after another, one character and one action per turn. (Revision 2 resolved both actions together; that was cancelled.) | — | If the course means that *every character* acts in turn, rather than one chosen character per team, that would need a change (Q3). |
 | **C2** | Elimination victory | **Partly.** Elimination is kept. We **add** the 60 % castle loss and a Draw; the course mentions only win and lose. | The castle win gives aiming a target that isn't a character. | Set `CASTLE_LOSS_ENABLED = False`. In simultaneous mode a Draw still happens if both teams are eliminated in the same round; in alternating mode only the round-30 tie-break (C7) can produce one. |
 | **C3** | Attacks can miss | **Unknown.** The course may assume every Attack deals damage. | Misses are what make artillery a skill. | Add an assist mode (for example, Easy-only aim help). Not planned. |
-| **C4** | "AI defends below 50 % HP" with a team | **Interpretation.** "HP" is ambiguous with several characters, and our defence is probabilistic (50 / 70 / 85 %). | We use the weakest living AI character. | Set Defend chance to 100 % (one table row). |
+| **C4** | "AI defends below 50 % HP" with a team | **Interpretation.** "HP" is ambiguous with several characters, and our defence is probabilistic: 40 / 50 / 60 % (Easy / Normal / Hard) when a character is below half HP, against 10 / 5 / 0 % otherwise (M3.1 table; the 50 / 70 / 85 % here before M3.3 was an outdated draft). | We use any living AI character below half HP as the trigger. | Set Defend chance to 100 % (one table row). |
 | **C5** | "Defend reduces damage by 50 %" | **Interpretation.** Applied after DEF, minimum 1, to the defending character. *Since M3.2,* the team's castle blocks also take half damage while it defends (Castle Guard, our addition). | — | Moving the halving before DEF is a one-line change; `CASTLE_GUARD_PERCENT = 0` turns Castle Guard off. |
 | **C6** | Characters "attack" | **Interpretation.** Characters attack *through* their team's cannon; the actor's stats set the damage. | One launch point per side (PM request). | Fire from the actor's slot instead (the Rev 1 design). Needs re-tuning. |
-| **C7** | Round limit | **Addition.** The course doesn't mention one. The match ends after round 30 with the §4.7 tie-break, which can be a Draw. | It guarantees that every match ends, including AI-vs-AI test matches. | Raise `ROUND_LIMIT`. Removing it isn't recommended. |
+| **C7** | Round limit | **Addition (built in M3.3).** The course doesn't mention one. A team match ends after 30 complete rounds with the §4.7 tie-break, which can be a Draw. The M1 duel has no limit. | It guarantees that every match ends, including AI-vs-AI test matches. | Raise `ROUND_LIMIT`. Removing it isn't recommended. |
 
 ### 10.2 Design questions now decided (the PM may still override)
 - **A1 Fewer than 3 characters:** allowed (1–3, as the course says). The AI matches the player's
@@ -852,11 +879,14 @@ open (see M3). The original plan follows.
   Easy / Normal / Hard table; Player vs AI as the default mode on the selection screen (mode and
   difficulty buttons; the computer builds a legal RIGHT team of the same size); a preflight of
   the M2.3 abilities; a Defend / Repair balance analysis (analysis only).
-- **M3.2 (done, awaiting PM review and human playtesting):** a reproducible balance benchmark
+- **M3.2 (done, PM-accepted; human playtesting pending):** a reproducible balance benchmark
   (`scripts/balance_benchmark.py`); Castle Guard and Repair 150 adopted; 60 % kept
   (`docs/M3.2_balance_report.md`).
-- **Still open in M3:** the round limit and tie-break (§4.7); the first-move advantage
-  (59–66 % in AI mirror matches). The PM defines M3.3.
+- **M3.3 (done, awaiting PM review and human playtesting):** the 30-round limit and tie-break
+  (§4.7); the first mover alternates on rematch (this answers the first-move advantage measured in
+  M3.2 over a series of matches, not within one match); the Castle Guard indicator; the result
+  screen's reason and rounds; the course-compliance checklist (`docs/M3.3_course_compliance.md`).
+- **Next:** M4 (polish), only after PM review and human approval.
 
 **Updated in M2.3.**
 - **Required:** Player vs AI.
@@ -1379,3 +1409,29 @@ uncertainty are in `docs/M3.2_balance_report.md`; the raw tables are in
 
 This is not human gameplay acceptance.
 
+### M3.3 notes (final game rules and flow)
+**Brief (PM, M3.3):** finish the core rules and the player flow before the December 8 deadline. No
+new classes, abilities or major GUI features, and no rebalancing.
+
+**Battle (`battle.py`):**
+- `ROUND_LIMIT = 30` and `Battle.tie_break()` (§4.7).
+- `Battle(first_side=...)`; `reset(first_side=None)` keeps or changes the first mover.
+- `end_reason` (`"elimination"`, `"castle"`, `"tie_break"`, `"draw"`, `"both_lost"`) and
+  `tie_break_rule`. The `game_over` event carries `"reason"`.
+- `Team.total_hp()` and `total_max_hp()`.
+- A round starts when the first mover is to act again, instead of always at LEFT's turn.
+
+**Interface (`main.py`):**
+- `Game.rematch()` swaps the first mover in team matches. The M1 duel keeps LEFT.
+- A guarded castle gets a blue outline and a GUARDED badge (`draw_castle_guard`,
+  `guard_badge_rect`), read from `Battle.castle_guarded` every frame.
+- The HUD shows "Round N / 30".
+- The result screen adds the reason and "Rounds played: N" (team matches only).
+- The log says who moves first and when the round limit decided the match.
+
+**Benchmark:** `scripts/balance_benchmark.py` lifts the game's round limit above its own 40-round
+cap, so the M3.2 results still reproduce. 300 replayed matches were identical.
+
+**Not changed:** the combat rules, M3.2 balance, AI decisions, physics and the M1 duel.
+
+Human gameplay acceptance is pending.

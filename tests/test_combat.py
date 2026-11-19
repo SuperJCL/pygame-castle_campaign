@@ -8,7 +8,7 @@ are within the 50 px blast.
 """
 import unittest
 
-from battle import Battle, Team, MAX_STEPS
+from battle import Battle, Team, MAX_STEPS, ROUND_LIMIT
 from castle import Castle
 from characters import Archer, Engineer, Knight
 
@@ -53,6 +53,18 @@ def pass_turn(battle):
     index = next(i for i, c in enumerate(team.characters) if c.is_alive())
     accepted, events = act(battle, index, "attack", HARMLESS)
     assert accepted, events
+    return events
+
+
+def defend_turns(battle, count):
+    """`count` turns in a row, whoever is to move: the first living character Defends
+    (instant, no shot, no damage). Returns the events of the last turn."""
+    events = []
+    for _ in range(count):
+        team = battle.teams[battle.active_side]
+        index = next(i for i, c in enumerate(team.characters) if c.is_alive())
+        accepted, events = act(battle, index, "defend")
+        assert accepted, events
     return events
 
 
@@ -521,6 +533,197 @@ class VictoryTest(unittest.TestCase):
                          (1, 140, 0, False))
         self.assertEqual((battle.round_number, battle.active_side), (1, "left"))
         self.assertIs(battle.teams["left"].castle, battle.castles["left"])
+
+
+class FirstMoverTest(unittest.TestCase):
+    """M3.3: either side can move first; a round is complete once both teams have acted."""
+
+    def test_left_moves_first_unless_told_otherwise(self):
+        battle = combat([Knight], [Knight])
+        self.assertEqual((battle.first_side, battle.active_side, battle.round_number), ("left", "left", 1))
+        battle = combat([Knight], [Knight], first_side="right")
+        self.assertEqual((battle.first_side, battle.active_side, battle.round_number), ("right", "right", 1))
+        with self.assertRaises(ValueError):
+            combat([Knight], [Knight], first_side="middle")
+
+    def test_reset_can_change_who_moves_first_and_starts_a_fresh_match(self):
+        battle = combat([Archer], [Knight])
+        archer = battle.teams["left"].characters[0]
+        act(battle, 0, "special", TOWER)                          # Power Shot: castle damage, EXP, cooldown
+        battle.teams["right"].characters[0].take_damage(50)
+        battle.reset(first_side="right")
+        archer = battle.teams["left"].characters[0]
+        knight = battle.teams["right"].characters[0]
+        self.assertEqual((battle.first_side, battle.active_side, battle.round_number), ("right", "right", 1))
+        self.assertEqual((archer.exp, archer.special_cooldown, knight.hp), (0, 0, 140))
+        self.assertEqual(battle.castles["right"].total_hp(), 1500)
+        self.assertIsNone(battle.projectile)
+        self.assertIsNone(battle.winner)
+        self.assertIsNone(battle.end_reason)
+        battle.reset()                                            # no argument: keeps the first side
+        self.assertEqual(battle.active_side, "right")
+
+    def test_with_right_first_a_round_starts_each_time_right_is_to_move(self):
+        battle = combat([Knight], [Knight], first_side="right")
+        events = defend_turns(battle, 1)                          # right, round 1
+        self.assertEqual((battle.round_number, battle.active_side), (1, "left"))
+        self.assertFalse(events_of(events, "round"))
+        events = defend_turns(battle, 1)                          # left completes round 1
+        self.assertEqual((battle.round_number, battle.active_side), (2, "right"))
+        self.assertEqual(events_of(events, "round"), [{"type": "round", "number": 2}])
+
+    def test_cooldowns_tick_once_per_round_with_right_first(self):
+        battle = combat([Knight], [Archer], first_side="right")
+        archer = battle.teams["right"].characters[0]
+        self.assertTrue(act(battle, 0, "special", HARMLESS)[0])  # round 1: Power Shot, cooldown 3
+        pass_turn(battle)                                         # left; round 2 starts
+        self.assertEqual((battle.round_number, archer.special_cooldown), (2, 2))
+        pass_turn(battle)                                         # right, still round 2: no tick
+        self.assertEqual(archer.special_cooldown, 2)
+        for round_number in (3, 4):
+            pass_turn(battle)                                     # left; the next round starts
+            self.assertEqual(battle.round_number, round_number)
+            if round_number == 3:
+                self.assertFalse(act(battle, 0, "special", HARMLESS)[0])   # still recharging
+                pass_turn(battle)                                 # right
+        self.assertEqual(archer.special_cooldown, 0)
+        self.assertTrue(act(battle, 0, "special", HARMLESS)[0])  # round 4 = 1 + 3: ready again
+
+    def test_defend_and_rally_end_at_the_defending_team_next_turn_with_right_first(self):
+        battle = combat([Archer], [Knight], first_side="right")
+        knight = battle.teams["right"].characters[0]
+        act(battle, 0, "defend")                                  # right, round 1
+        act(battle, 0, "attack", FRONT_CHARACTER)                 # left: 40-12 = 28, halved 14
+        self.assertEqual(knight.hp, 140 - 14)
+        self.assertFalse(knight.is_defending)                     # right's turn (round 2) has started
+        # Left defends as the second mover of round 2: it must last across the round start.
+        archer = battle.teams["left"].characters[0]
+        pass_turn(battle)                                         # right, round 2
+        act(battle, 0, "defend")                                  # left, round 2
+        self.assertEqual(battle.round_number, 3)
+        self.assertTrue(archer.is_defending and battle.castle_guarded("left"))
+        act(battle, 0, "attack", FRONT_CHARACTER)                 # right, round 3: 30-4 = 26, halved 13
+        self.assertEqual(archer.hp, 90 - 13)
+        self.assertFalse(archer.is_defending)                     # left's turn has started
+
+        battle = combat([Archer], [Knight, Engineer], first_side="right")
+        act(battle, 0, "special")                                 # right Knight: Rally
+        self.assertTrue(battle.castle_guarded("right"))
+        _, events = act(battle, 0, "attack", TOWER)               # left Archer: 4 x 50, halved
+        self.assertEqual(events_of(events, "explosion")[0]["damage"], 100)
+        self.assertFalse(battle.castle_guarded("right"))          # right's next turn: Rally over
+
+
+class RoundLimitTest(unittest.TestCase):
+    """M3.3: a team match ends after 30 complete rounds; then the tie-breakers decide."""
+
+    def play_to_the_limit(self, battle):
+        """Defend through rounds 1-29 and the first turn of round 30; return the last turn's events."""
+        defend_turns(battle, 2 * (ROUND_LIMIT - 1) + 1)
+        self.assertEqual(battle.round_number, ROUND_LIMIT)
+        self.assertIsNone(battle.winner)                          # one team has acted in round 30
+        return defend_turns(battle, 1)                            # the other team completes it
+
+    def test_the_limit_is_30_complete_rounds_with_either_side_first(self):
+        self.assertEqual(ROUND_LIMIT, 30)
+        for first in ("left", "right"):
+            with self.subTest(first=first):
+                battle = combat([Knight], [Knight], first_side=first)
+                defend_turns(battle, 2 * (ROUND_LIMIT - 1))
+                self.assertEqual((battle.round_number, battle.active_side), (30, first))
+                defend_turns(battle, 1)                           # the first mover acts in round 30
+                self.assertIsNone(battle.winner)                  # not over after half a round
+                self.assertEqual((battle.round_number, battle.active_side), (30, other(first)))
+                events = defend_turns(battle, 1)                  # round 30 is complete
+                self.assertEqual((battle.winner, battle.end_reason), ("draw", "draw"))   # nothing differs
+                self.assertEqual(battle.round_number, 30)
+                self.assertFalse(events_of(events, "round"))      # no round 31
+                self.assertEqual(events_of(events, "game_over"),
+                                 [{"type": "game_over", "winner": "draw", "reason": "draw"}])
+                self.assertFalse(battle.perform_action(0, "defend"))
+
+    def test_tie_break_1_more_living_characters(self):
+        battle = combat([Knight, Archer], [Knight, Archer])
+        battle.teams["left"].characters[0].take_damage(130)       # left: 2 alive but low HP
+        battle.castles["left"].blocks[0].take_damage(100)         # and the weaker castle
+        battle.teams["right"].characters[1].take_damage(90)       # right: only 1 alive
+        events = self.play_to_the_limit(battle)
+        self.assertEqual((battle.winner, battle.end_reason, battle.tie_break_rule),
+                         ("left", "tie_break", "more living characters"))
+        self.assertEqual(events_of(events, "game_over")[0]["reason"], "tie_break")
+
+    def test_tie_break_2_share_of_character_hp(self):
+        battle = combat([Knight], [Knight])
+        battle.teams["left"].characters[0].take_damage(20)        # 120 / 140
+        battle.teams["right"].characters[0].take_damage(40)       # 100 / 140
+        battle.castles["left"].blocks[0].take_damage(100)         # left's castle is weaker
+        self.play_to_the_limit(battle)
+        self.assertEqual((battle.winner, battle.tie_break_rule), ("left", "higher share of character HP"))
+
+    def test_tie_break_2_compares_exact_fractions_of_current_max_hp(self):
+        # 70 / 140 and 45 / 90 are both exactly one half, so rule 2 is a tie and rule 3 decides.
+        battle = combat([Knight], [Archer])
+        battle.teams["left"].characters[0].take_damage(70)
+        battle.teams["right"].characters[0].take_damage(45)
+        battle.castles["right"].blocks[0].take_damage(1)
+        self.play_to_the_limit(battle)
+        self.assertEqual((battle.winner, battle.tie_break_rule), ("left", "more castle HP left"))
+        # Defeated characters still count in the team's max HP, and level-ups raise it.
+        team = combat([Knight, Archer], [Knight]).teams["left"]
+        team.characters[1].take_damage(90)
+        team.characters[0].gain_exp(30)                           # level 2: max HP 150
+        self.assertEqual((team.total_hp(), team.total_max_hp()), (150, 150 + 90))
+
+    def test_tie_break_3_castle_hp(self):
+        battle = combat([Knight], [Knight], first_side="right")
+        battle.teams["left"].characters[0].take_damage(30)        # same character HP on both sides
+        battle.teams["right"].characters[0].take_damage(30)
+        battle.castles["left"].blocks[0].take_damage(60)
+        battle.castles["right"].blocks[5].take_damage(50)         # right lost 10 HP less
+        self.play_to_the_limit(battle)
+        self.assertEqual((battle.winner, battle.tie_break_rule), ("right", "more castle HP left"))
+
+    def test_an_exact_tie_on_every_rule_is_a_draw(self):
+        battle = combat([Knight, Engineer], [Knight, Engineer])
+        for side in ("left", "right"):
+            battle.teams[side].characters[1].take_damage(30)
+            battle.castles[side].blocks[3].take_damage(75)
+        self.play_to_the_limit(battle)
+        self.assertEqual((battle.winner, battle.end_reason, battle.tie_break_rule), ("draw", "draw", None))
+
+    def test_a_win_on_the_last_turn_beats_the_tie_break(self):
+        battle = combat([Knight, Archer], [Knight, Archer])
+        battle.teams["right"].characters[1].take_damage(90)       # the tie-break would favour left
+        for block in battle.castles["left"].blocks:
+            block.take_damage(58)                                 # left's castle is at 58 %
+        defend_turns(battle, 2 * (ROUND_LIMIT - 1))
+        pass_turn(battle)                                         # left, round 30
+        act(battle, 0, "attack", TOWER)                           # right's last turn: 4 x 42 -> 69 %
+        self.assertEqual((battle.winner, battle.end_reason, battle.tie_break_rule), ("right", "castle", None))
+
+    def test_ordinary_wins_report_their_reason(self):
+        battle = combat([Knight], [Archer])
+        battle.teams["right"].characters[0].take_damage(64)
+        act(battle, 0, "attack", FRONT_CHARACTER)
+        self.assertEqual((battle.winner, battle.end_reason), ("left", "elimination"))
+        battle = combat([Knight], [Knight])
+        for block in battle.castles["right"].blocks:
+            block.take_damage(58)
+        act(battle, 0, "attack", TOWER)
+        self.assertEqual((battle.winner, battle.end_reason), ("left", "castle"))
+
+    def test_the_m1_duel_has_no_round_limit(self):
+        battle = Battle()
+        for _ in range(2 * ROUND_LIMIT + 2):                      # 31 complete rounds of harmless shots
+            aim(battle, *HARMLESS)
+            battle.fire()
+            while battle.projectile is not None:
+                battle.update()
+        self.assertEqual((battle.round_number, battle.winner, battle.active_side), (32, None, "left"))
+
+
+def other(side):
+    return "right" if side == "left" else "left"
 
 
 if __name__ == "__main__":

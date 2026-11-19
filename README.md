@@ -53,7 +53,8 @@ In VS Code you can also pick the `.venv` interpreter (**Python: Select Interpret
      LEFT team; the computer picks its own team of the same size when the battle starts.
    - A team can't have the same role twice. The first pick (Slot 1) stands nearest its castle.
    - Press **START BATTLE** when the team(s) are full.
-2. **Battle.** The LEFT team moves first; then the turns alternate. On your turn:
+2. **Battle.** The LEFT team moves first in the first match; then the turns alternate. The HUD
+   shows the round, e.g. "Round 7 / 30". On your turn:
    - **Choose who acts:** click one of your living characters, or press **1 / 2 / 3**. The chosen
      character has a yellow marker, and the panel shows its HP, ATK, DEF, Level, EXP and special.
    - **Aim** with the arrow keys (the orange arrow; longer means more power).
@@ -67,8 +68,12 @@ In VS Code you can also pick the `.venv` interpreter (**Python: Select Interpret
    On the computer's turn the buttons are greyed out. After a short pause it chooses a character
    and an action by itself, and the combat log shows its choice (e.g. "AI (Normal): Archer
    attacks the LEFT castle.") and what happened.
-3. **Result.** When a team wins, choose **Rematch** (same teams) or **Change teams**.
-   **R** is a rematch shortcut.
+3. **Result.** The result screen shows the winner (or DRAW), why the match ended and how many
+   rounds were played. Choose **Rematch** (same teams, same computer level) or **Change teams**.
+   **R** is a rematch shortcut (it also restarts a match in progress).
+   - **Who moves first alternates:** each rematch swaps the side that moves first (LEFT, RIGHT,
+     LEFT, …). Choosing teams again starts with LEFT. When the computer moves first, it plays its
+     turn by itself.
 
 The selection screen also has **Classic cannon duel (M1)**: the original two-cannon prototype
 without characters (SPACE fires).
@@ -83,7 +88,7 @@ without characters (SPACE fires).
 | Shift + arrow | Change by 5 instead of 1 |
 | Space | ATTACK (in the classic duel: fire) |
 | Enter | START BATTLE (selection screen) |
-| R | Restart the match with the same teams |
+| R | Rematch: restart with the same teams (the side that moves first swaps; not in the classic duel) |
 | Esc | Quit |
 
 Holding an arrow key keeps changing the value. SPACE acts once per press.
@@ -102,9 +107,10 @@ to switch the keyboard to English first.
     with 100 HP; damaged blocks get darker, and destroyed blocks disappear.
 - **Castle Guard:** while one of a team's characters is defending (Defend or Rally), enemy shots
   do half damage to that team's castle blocks, rounded down (50 → 25, 60 → 30, Power Shot 75 → 37).
-  It ends with the Defend, when that team's next turn starts, so it covers one enemy action. The
-  combat log then says "Castle Guard halved the damage to the castle." Added in M3.2 so that
-  Defend can protect the castle.
+  It ends with the Defend, when that team's next turn starts, so it covers one enemy action. Several
+  defenders don't add up: it is always half. A guarded castle has a blue outline and a
+  **GUARDED** badge, and the combat log says "Castle Guard halved the damage to the castle."
+  Added in M3.2 so that Defend can protect the castle.
 - **Specials:**
   - **Knight – Rally:** all living allies defend until your next turn (so the castle is guarded
     too). Cooldown 4 rounds.
@@ -120,6 +126,18 @@ to switch the keyboard to English first.
   Rally or Repair. Level-ups (30 × level EXP) raise HP, ATK and DEF, up to Level 5.
 - **Winning:** defeat every enemy character, **or** destroy 60 % of the enemy castle (our extra
   rule; it can be switched off for elimination-only play with `Battle(castle_loss_enabled=False)`).
+- **Round limit (our design rule, not a course requirement):** a team match ends after 30
+  complete rounds; a round is complete once both teams have acted, whichever side started. An
+  ordinary win always counts first, even on the very last turn. If nobody has won, these decide
+  in order:
+  1. more living characters;
+  2. a higher share of character HP (total HP ÷ total current max HP, defeated characters
+     included);
+  3. more castle HP left (as a share of the castle's maximum);
+  4. otherwise it is a draw.
+
+  The shares are compared exactly (by cross-multiplying, no decimals). The classic M1 duel has no
+  round limit.
 - **Damage formula:** deterministic, so tests can check exact numbers. The instructor's
   reference formula adds a random −5 to +10.
 - **Balance (M3.2):** Castle Guard and Repair 150 were chosen with a seeded AI-vs-AI benchmark
@@ -169,6 +187,7 @@ python -m unittest discover tests
 | `docs/M3.1_balance_analysis.md` | M3.1 analysis of Defend and Repair (recommendations only, nothing changed) |
 | `docs/M3.2_balance_report.md` | M3.2 balance experiment: method, results, the rule changes made and their limits |
 | `docs/M3.2_benchmark_results.md`, `docs/M3.2_benchmark_results_easy.md` | The benchmark's generated result tables |
+| `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules |
 | `docs/Rebound_reference_review.md` | Review of a reference project (ideas only) |
 
 ## References

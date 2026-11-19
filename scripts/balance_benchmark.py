@@ -70,6 +70,9 @@ def apply_rules(rules):
     battle_module.CASTLE_GUARD_PERCENT = 50 if rules["guard"] else 0
     Engineer.REPAIR_POOL = rules["repair"]
     castle.LOSS_PERCENT = rules["loss"]
+    # The game's own 30-round limit (added in M3.3) is lifted here, so this benchmark
+    # keeps the MAX_ROUNDS cap it used in M3.2 and its results stay reproducible.
+    battle_module.ROUND_LIMIT = MAX_ROUNDS + 1
 
 
 def make_battle(rules, roster):

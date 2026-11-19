@@ -15,6 +15,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 try:
     import pygame
     import main
+    from battle import ROUND_LIMIT
     from characters import Archer, Engineer, Knight
 except ImportError:          # Pygame is not installed: the tests below are skipped
     pygame = None
@@ -451,7 +452,8 @@ class ResultScreenTest(MainTestCase):
         right = self.game.battle.teams["right"].characters
         self.assertEqual([type(c) for c in right], [Engineer, Knight])
         self.assertEqual([c.hp for c in right], [110, 140])
-        self.assertEqual((self.game.battle.round_number, self.game.battle.active_side), (1, "left"))
+        # M3.3: the side that moves first alternates, so RIGHT starts the first rematch.
+        self.assertEqual((self.game.battle.round_number, self.game.battle.active_side), (1, "right"))
 
     def test_change_teams_returns_to_selection_with_the_picks_kept(self):
         self.win_quickly()
@@ -464,6 +466,216 @@ class ResultScreenTest(MainTestCase):
         self.game.handle_key(pygame.K_r, 0)
         self.assertEqual(self.game.state, "battle")
         self.assertIsNone(self.game.battle.winner)
+
+
+def end_match_now(test):
+    """The team to move wins at once: every enemy character is defeated, then it ends its turn."""
+    battle = test.game.battle
+    enemy = "right" if battle.active_side == "left" else "left"
+    for character in battle.teams[enemy].characters:
+        character.take_damage(500)
+    test.click(test.game.action_buttons["defend"].rect)
+    test.assertEqual(test.game.state, "result")
+
+
+def defend_until_the_end(test):
+    """Both teams click DEFEND every turn until the match ends (two-player mode)."""
+    for _ in range(2 * ROUND_LIMIT + 2):
+        if test.game.state == "result":
+            return
+        test.click(test.game.action_buttons["defend"].rect)
+    test.assertEqual(test.game.state, "result")
+
+
+class RematchAndFirstMoverTest(MainTestCase):
+    """M3.3: the side that moves first alternates on every rematch (LEFT, RIGHT, LEFT, ...)."""
+
+    def test_the_first_mover_alternates_on_every_rematch(self):
+        self.start([Knight, Archer], [Engineer, Knight])
+        firsts = [self.game.battle.active_side]
+        for _ in range(3):
+            end_match_now(self)
+            self.click(self.game.rematch_button.rect)
+            firsts.append(self.game.battle.active_side)
+        self.game.handle_key(pygame.K_r, 0)                    # R is a rematch too
+        firsts.append(self.game.battle.active_side)
+        self.assertEqual(firsts, ["left", "right", "left", "right", "left"])
+        self.game.handle_key(pygame.K_r, 0)
+        self.assertEqual(self.game.battle.round_number, 1)     # a right-first match still shows Round 1
+        self.assertEqual(self.game.log, ["--- Round 1 ---", "RIGHT team moves first."])
+
+    def test_new_teams_start_with_left_again(self):
+        self.start([Knight], [Archer])
+        end_match_now(self)
+        self.click(self.game.rematch_button.rect)              # RIGHT starts the rematch
+        end_match_now(self)
+        self.click(self.game.change_teams_button.rect)
+        self.click(self.game.start_button.rect)                # same picks, a new series
+        self.assertEqual(self.game.battle.active_side, "left")
+
+    def test_rematch_resets_the_match_and_keeps_teams_and_difficulty(self):
+        self.click(self.game.difficulty_buttons["hard"].rect)
+        self.click(self.game.size_buttons[1].rect)
+        for role in (Knight, Archer):
+            self.click(self.game.card_rects[("left", role)])
+        self.click(self.game.start_button.rect)
+        ai, battle = self.game.ai, self.game.battle
+        right_roles = [type(c) for c in battle.teams["right"].characters]
+        self.click(self.character_rect("left", 1))             # the Archer
+        aim(self.game, *TOWER)
+        self.click(self.game.action_buttons["special"].rect)   # Power Shot: castle damage, EXP, cooldown
+        finish_shot(self.game)
+        self.assertEqual(battle.castles["right"].total_hp(), 1500 - 4 * 75)
+        self.game.handle_key(pygame.K_r, 0)                    # R restarts at any time
+        self.assertIs(self.game.ai, ai)
+        self.assertEqual(ai.difficulty, "hard")
+        self.assertIsNone(battle.projectile)
+        self.assertEqual([type(c) for c in battle.teams["left"].characters], [Knight, Archer])
+        self.assertEqual([type(c) for c in battle.teams["right"].characters], right_roles)
+        for side in ("left", "right"):
+            self.assertEqual(battle.castles[side].total_hp(), 1500)
+            for character in battle.teams[side].characters:
+                self.assertEqual((character.hp, character.exp, character.level, character.special_cooldown),
+                                 (character.max_hp, 0, 1, 0))
+        self.assertEqual((battle.round_number, battle.active_side, battle.winner), (1, "right", None))
+        self.assertEqual(self.game.explosions, [])
+
+    def test_the_computer_moves_first_by_itself_when_right_starts(self):
+        self.click(self.game.card_rects[("left", Knight)])     # Player vs AI, Normal, 1 v 1
+        self.click(self.game.start_button.rect)
+        end_match_now(self)
+        self.click(self.game.rematch_button.rect)
+        self.assertEqual(self.game.battle.active_side, "right")
+        self.assertTrue(self.game.is_ai_turn())
+        self.assertFalse(self.game.action_buttons["attack"].enabled)
+        for _ in range(main.AI_DELAY_FRAMES):
+            self.game.update()
+        self.assertIn("AI (Normal):", " ".join(self.game.log))
+        finish_shot(self.game)
+        self.assertEqual((self.game.battle.active_side, self.game.battle.round_number), ("left", 1))
+        self.click(self.game.action_buttons["defend"].rect)    # the human completes round 1
+        self.assertEqual((self.game.battle.active_side, self.game.battle.round_number), ("right", 2))
+
+    def test_two_players_can_play_with_right_first(self):
+        self.start([Knight], [Archer])
+        self.game.handle_key(pygame.K_r, 0)                    # RIGHT starts
+        self.assertTrue(self.game.action_buttons["attack"].enabled)
+        aim(self.game, *FRONT_CHARACTER)
+        self.click(self.game.action_buttons["attack"].rect)    # the RIGHT Archer: 40 - 12 = 28
+        finish_shot(self.game)
+        self.assertEqual(self.game.battle.teams["left"].characters[0].hp, 140 - 28)
+        self.assertEqual((self.game.battle.active_side, self.game.battle.round_number), ("left", 1))
+        self.click(self.game.action_buttons["defend"].rect)
+        self.assertEqual((self.game.battle.active_side, self.game.battle.round_number), ("right", 2))
+
+
+class CastleGuardIndicatorTest(MainTestCase):
+    """M3.3: a guarded castle gets a blue outline and a GUARDED badge, drawn straight
+    from Battle.castle_guarded(side)."""
+
+    def outline_pixel(self, side):
+        """A pixel just inside the border of the castle's bottom outer block."""
+        self.game.draw()
+        x = 201 if side == "left" else 1080 - 2
+        return tuple(self.screen.get_at((x, 544)))[:3]
+
+    def badge_pixel(self, side):
+        self.game.draw()
+        badge = main.guard_badge_rect(side)
+        return tuple(self.screen.get_at((badge.left + 2, badge.centery)))[:3]
+
+    def test_the_indicator_appears_and_disappears_with_the_guard(self):
+        self.start([Knight], [Knight])
+        self.assertNotEqual(self.outline_pixel("left"), main.GUARD_COLOR)
+        self.click(self.game.action_buttons["defend"].rect)    # LEFT defends
+        self.assertEqual(self.outline_pixel("left"), main.GUARD_COLOR)
+        self.assertEqual(self.badge_pixel("left"), main.GUARD_COLOR)
+        self.assertNotEqual(self.outline_pixel("right"), main.GUARD_COLOR)
+        self.assertNotEqual(self.badge_pixel("right"), main.GUARD_COLOR)
+        aim(self.game, *HARMLESS)
+        self.click(self.game.action_buttons["attack"].rect)    # RIGHT's turn passes...
+        finish_shot(self.game)
+        self.assertEqual(self.game.battle.active_side, "left")  # ...LEFT's turn ends the guard
+        self.assertNotEqual(self.outline_pixel("left"), main.GUARD_COLOR)
+        self.assertNotEqual(self.badge_pixel("left"), main.GUARD_COLOR)
+
+    def test_the_indicator_reads_the_battle_state_directly(self):
+        self.start([Knight], [Knight])
+        knight = self.game.battle.teams["right"].characters[0]
+        knight.defend()                                        # changed in the Battle only
+        self.assertTrue(self.game.battle.castle_guarded("right"))
+        self.assertEqual(self.outline_pixel("right"), main.GUARD_COLOR)
+        knight.clear_defend()
+        self.assertNotEqual(self.outline_pixel("right"), main.GUARD_COLOR)
+        knight.defend()
+        knight.take_damage(500)                                # a defeated defender guards nothing
+        self.assertFalse(self.game.battle.castle_guarded("right"))
+        self.assertNotEqual(self.outline_pixel("right"), main.GUARD_COLOR)
+
+    def test_the_badge_does_not_cover_characters_bars_blocks_or_the_hud(self):
+        self.start([Knight, Archer, Engineer], [Knight, Archer, Engineer])
+        battle = self.game.battle
+        for side in ("left", "right"):
+            badge = main.guard_badge_rect(side)
+            self.assertGreater(badge.top, 75)                  # below the HUD lines
+            self.assertLessEqual(badge.bottom, main.GROUND_Y)
+            for index in range(3):
+                left, top, width, height = battle.teams[side].character_rect(index)
+                # The figure plus its name and HP bar, which are drawn up to 66 px above it.
+                area = pygame.Rect(left + width // 2 - 35, top - 66, 70, height + 66)
+                self.assertFalse(badge.colliderect(area), (side, index))
+            for block in battle.castles[side].blocks:
+                self.assertFalse(badge.colliderect((block.x, block.y, block.size, block.size)))
+            pivot_x, pivot_y = battle.cannons[side].x, battle.cannons[side].y
+            self.assertFalse(badge.colliderect((pivot_x - 30, pivot_y - 30, 60, 60)))
+
+
+class ResultReasonTest(MainTestCase):
+    """M3.3: the result screen shows the winner, the reason and the rounds played."""
+
+    def test_elimination_and_castle_wins_show_reason_and_rounds(self):
+        self.start([Knight], [Archer])
+        end_match_now(self)
+        self.assertEqual(self.game.result_title(), "LEFT TEAM WINS!")
+        self.assertEqual(self.game.result_reason(), "Every RIGHT character was defeated.")
+        self.assertEqual(self.game.result_rounds(), "Rounds played: 1")
+        self.game.handle_key(pygame.K_r, 0)                    # RIGHT moves first now
+        for block in self.game.battle.castles["left"].blocks:
+            block.take_damage(58)
+        aim(self.game, *TOWER)
+        self.click(self.game.action_buttons["attack"].rect)
+        finish_shot(self.game)
+        self.assertEqual(self.game.result_title(), "RIGHT TEAM WINS!")
+        self.assertEqual(self.game.result_reason(), "The LEFT castle reached 60% destruction.")
+        self.assertEqual(self.game.result_rounds(), "Rounds played: 1")
+
+    def test_the_round_limit_tie_break_shows_its_rule(self):
+        self.start([Knight], [Knight])
+        self.game.battle.teams["right"].characters[0].take_damage(20)
+        defend_until_the_end(self)
+        self.assertEqual(self.game.result_title(), "LEFT TEAM WINS!")
+        self.assertEqual(self.game.result_reason(), "Round limit: higher share of character HP.")
+        self.assertEqual(self.game.result_rounds(), f"Rounds played: {ROUND_LIMIT}")
+        self.assertIn("Round limit reached: tie-break.", self.game.log)
+
+    def test_a_true_draw_after_the_round_limit(self):
+        self.start([Knight, Archer], [Knight, Archer])
+        self.game.handle_key(pygame.K_r, 0)                    # RIGHT first: the limit still holds
+        defend_until_the_end(self)
+        self.assertEqual(self.game.battle.round_number, ROUND_LIMIT)
+        self.assertEqual(self.game.result_title(), "DRAW!")
+        self.assertEqual(self.game.result_reason(), "Round limit: every tie-breaker was equal.")
+        self.assertEqual(self.game.result_rounds(), f"Rounds played: {ROUND_LIMIT}")
+
+    def test_every_result_line_fits_the_result_panel(self):
+        texts = ["Every RIGHT character was defeated.", "The RIGHT castle reached 60% destruction.",
+                 "Round limit: more living characters.", "Round limit: higher share of character HP.",
+                 "Round limit: more castle HP left.", "Round limit: every tie-breaker was equal."]
+        for text in texts:
+            self.assertLess(self.game.font.size(text)[0], 640, text)
+        self.start([Knight], [Knight])
+        defend_until_the_end(self)
+        self.game.draw()                                       # the result overlay draws without errors
 
 
 class PlayerVsAISelectionTest(MainTestCase):
@@ -634,12 +846,20 @@ class ClassicDuelTest(MainTestCase):
         finish_shot(self.game)
         self.assertEqual(battle.winner, "left")
         self.assertEqual(self.game.state, "result")
+        self.assertEqual(self.game.result_reason(), "The RIGHT castle reached 60% destruction.")
+        self.assertEqual(self.game.result_rounds(), "")    # the duel's result screen is unchanged
         self.game.handle_key(pygame.K_r, 0)
         self.assertIsNone(battle.winner)
         self.assertEqual(self.game.state, "battle")
         for side in ("left", "right"):
             self.assertEqual(battle.castles[side].total_hp(), 1500)
             self.assertEqual((battle.cannons[side].angle, battle.cannons[side].power), (45, 50))
+
+    def test_left_always_fires_first_in_the_duel(self):
+        for _ in range(3):                                  # R never swaps sides in the M1 duel
+            self.game.handle_key(pygame.K_r, 0)
+            self.assertEqual(self.game.battle.active_side, "left")
+            self.assertEqual(self.game.log, [])
 
 
 if __name__ == "__main__":

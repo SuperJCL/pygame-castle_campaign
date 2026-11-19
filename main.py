@@ -20,8 +20,8 @@ import math
 import pygame
 
 from ai import DIFFICULTY_SETTINGS, AIController
-from battle import BLAST_RADIUS, FIELD_WIDTH, MAX_TEAM_SIZE, Battle, direction, other_side
-from castle import GROUND_Y
+from battle import BLAST_RADIUS, FIELD_WIDTH, MAX_TEAM_SIZE, ROUND_LIMIT, Battle, direction, other_side
+from castle import BLOCK_SIZE, CASTLE_X, GROUND_Y
 from characters import ARCHETYPES, MAX_LEVEL, Archer, Knight
 
 WINDOW_WIDTH = FIELD_WIDTH        # 1280
@@ -53,6 +53,7 @@ HARD_HAT = (240, 200, 40)
 HOOD = (60, 130, 60)
 DEFEATED_COLOR = (120, 120, 120)
 DEFEND_COLOR = (90, 170, 255)
+GUARD_COLOR = (30, 110, 235)       # Castle Guard: outline on the blocks and the GUARDED badge
 COOLDOWN_COLOR = (255, 225, 120)  # these two are drawn on the green ground strip
 READY_COLOR = (235, 240, 235)
 BUTTON_COLOR = (70, 95, 130)
@@ -80,6 +81,18 @@ def draw_text(screen, text, font, color, **position):
     """Draw text placed by one keyword, e.g. center=(x, y) or topleft=(x, y)."""
     image = font.render(text, True, color)
     screen.blit(image, image.get_rect(**position))
+
+
+def guard_badge_rect(side):
+    """Where the GUARDED badge of `side`'s castle is drawn: in the empty space above the
+    castle's low wall (its back three columns), clear of the characters and their HP bars,
+    the cannon and the HUD. The two sides are mirror images."""
+    center_x = CASTLE_X["left"] + BLOCK_SIZE * 3 // 2               # 248
+    if side == "right":
+        center_x = WINDOW_WIDTH - center_x                          # 1032
+    badge = pygame.Rect(0, 0, 84, 20)
+    badge.center = (center_x, GROUND_Y - BLOCK_SIZE - BLOCK_SIZE // 2)   # y 512: above the low wall
+    return badge
 
 
 def wrap_text(text, font, max_width):
@@ -127,9 +140,14 @@ def describe_event(event):
     if kind == "invalid":
         return [f"Not allowed: {event['reason']}."]
     if kind == "game_over":
+        lines = []
+        if event.get("reason") == "tie_break":
+            lines.append("Round limit reached: tie-break.")
+        elif event.get("reason") == "draw":
+            lines.append("Round limit reached: every tie-breaker is equal.")
         if event["winner"] == "draw":
-            return ["It's a draw!"]
-        return [f"{event['winner'].upper()} wins!"]
+            return lines + ["It's a draw!"]
+        return lines + [f"{event['winner'].upper()} wins!"]
     return []    # "fire" and "turn" are shown by the HUD instead
 
 
@@ -298,8 +316,13 @@ class Game:
         self.begin_match()
 
     def rematch(self):
-        """Play again with the same teams (also the R key)."""
-        self.battle.reset()
+        """Play again with the same teams (the Rematch button or R). In team matches the
+        side that moves first swaps every time: LEFT, then RIGHT, then LEFT... A new choice
+        of teams starts with LEFT again. The M1 duel always starts with LEFT."""
+        first_side = self.battle.first_side
+        if self.battle.teams is not None:
+            first_side = other_side(first_side)
+        self.battle.reset(first_side=first_side)
         if self.ai is not None:
             self.ai.new_match()
         self.begin_match()
@@ -313,8 +336,9 @@ class Game:
             self.log = []
             self.message = "LEFT cannon: aim, then press SPACE to fire."
         else:
-            self.log = ["--- Round 1 ---"]
-            self.message = "Choose a character, aim, then choose an action."
+            first = f"{self.battle.first_side.upper()} team moves first."
+            self.log = ["--- Round 1 ---", first]
+            self.message = first + " Choose a character, aim, then choose an action."
         self.refresh_buttons()
 
     def try_start(self):
@@ -591,12 +615,24 @@ class Game:
         return f"{self.battle.winner.upper()} TEAM WINS!"
 
     def result_reason(self):
-        if self.battle.winner == "draw":
+        """One line: why the match ended (from Battle.end_reason)."""
+        reason = self.battle.end_reason
+        if reason == "tie_break":
+            return f"Round limit: {self.battle.tie_break_rule}."
+        if reason == "draw":
+            return "Round limit: every tie-breaker was equal."
+        if reason == "both_lost":
             return "Both sides lost at the same time."
-        loser = other_side(self.battle.winner)
-        if self.battle.teams is not None and not self.battle.teams[loser].alive_characters():
-            return f"Every {loser.upper()} character was defeated."
-        return f"The {loser.upper()} castle reached 60% destruction."
+        loser = other_side(self.battle.winner).upper()
+        if reason == "elimination":
+            return f"Every {loser} character was defeated."
+        return f"The {loser} castle reached 60% destruction."
+
+    def result_rounds(self):
+        """'Rounds played: N' for team matches; "" for the M1 duel (its result screen is unchanged)."""
+        if self.battle.teams is None:
+            return ""
+        return f"Rounds played: {self.battle.round_number}"
 
     # ----- drawing: team selection ---------------------------------------------------------
 
@@ -677,6 +713,9 @@ class Game:
                 rect = (block.x, block.y, block.size, block.size)
                 pygame.draw.rect(self.screen, block_color(side, block.hp, block.max_hp), rect)
                 pygame.draw.rect(self.screen, TEXT_COLOR, rect, 1)
+            # Asked from the Battle on every frame, so it can never be out of date.
+            if self.battle.castle_guarded(side):
+                self.draw_castle_guard(side, castle)
         if self.battle.teams is not None:
             self.draw_characters()
         for side, cannon in self.battle.cannons.items():
@@ -693,6 +732,14 @@ class Game:
             color = (255, int(220 - 150 * progress), int(80 - 60 * progress))
             pygame.draw.circle(self.screen, color, (round(x), round(y)), radius,
                                0 if progress < 0.5 else 4)
+
+    def draw_castle_guard(self, side, castle):
+        """Castle Guard is on: a blue outline on every standing block, and a GUARDED badge."""
+        for block in castle.alive_blocks():
+            pygame.draw.rect(self.screen, GUARD_COLOR, (block.x, block.y, block.size, block.size), 3)
+        badge = guard_badge_rect(side)
+        pygame.draw.rect(self.screen, GUARD_COLOR, badge, border_radius=5)
+        draw_text(self.screen, "GUARDED", self.tiny_font, (255, 255, 255), center=badge.center)
 
     def draw_characters(self):
         """Each character at its Team slot, with its name, HP bar and special cooldown."""
@@ -777,13 +824,14 @@ class Game:
                 status = f"Turn: {side.upper()}    Angle {cannon.angle}°    Power {cannon.power}"
             draw_text(self.screen, status, self.font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 27))
         elif self.battle.is_over():
-            draw_text(self.screen, f"Round {self.battle.round_number}   -   GAME OVER",
+            draw_text(self.screen, f"Round {self.battle.round_number} / {ROUND_LIMIT}   -   GAME OVER",
                       self.font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 27))
         else:
             player = ""
             if self.ai is not None:
                 player = "  (computer)" if side == self.ai.side else "  (you)"
-            draw_text(self.screen, f"Round {self.battle.round_number}   -   {side.upper()} TEAM'S TURN{player}",
+            draw_text(self.screen, f"Round {self.battle.round_number} / {ROUND_LIMIT}   -   "
+                      f"{side.upper()} TEAM'S TURN{player}",
                       self.font, TEAM_COLORS[side], center=(WINDOW_WIDTH // 2, 27))
         draw_text(self.screen, self.message, self.small_font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 58))
 
@@ -822,9 +870,11 @@ class Game:
         panel.fill((0, 0, 0, 180))                                 # semi-transparent black
         self.screen.blit(panel, panel.get_rect(center=(WINDOW_WIDTH // 2, 250)))
         draw_text(self.screen, self.result_title(), self.big_font, (255, 255, 255),
-                  center=(WINDOW_WIDTH // 2, 190))
+                  center=(WINDOW_WIDTH // 2, 180))
         draw_text(self.screen, self.result_reason(), self.font, (230, 230, 230),
-                  center=(WINDOW_WIDTH // 2, 250))
+                  center=(WINDOW_WIDTH // 2, 238))
+        draw_text(self.screen, self.result_rounds(), self.small_font, (200, 200, 200),
+                  center=(WINDOW_WIDTH // 2, 270))
         self.rematch_button.draw(self.screen, self.font)
         self.change_teams_button.draw(self.screen, self.font)
         draw_text(self.screen, "R = rematch     Esc = quit", self.small_font, (220, 220, 220),

@@ -10,7 +10,9 @@ A Battle works in one of two modes, with the same physics and turn order:
 Shots fly under gravity and explode when they hit an enemy block, an enemy
 character or the ground. Everything enemy within the blast radius is damaged.
 A side loses when its castle reaches 60 % destruction or, in team combat, when
-all its characters are defeated.
+all its characters are defeated. The LEFT side moves first unless the Battle is
+told otherwise (first_side). A team match also ends after ROUND_LIMIT complete
+rounds, decided by the tie-breakers in Battle.tie_break().
 
 Like castle.py and characters.py, this module uses only the standard library,
 so the rules can be tested without opening a window. main.py draws the battle
@@ -55,6 +57,10 @@ EXP_FOR_SUPPORT_SPECIAL = 5   # Rally or Repair (a basic Defend earns nothing)
 # enemy shots do this much less damage to each of that team's castle blocks, rounded
 # down (50 -> 25, 60 -> 30, 75 -> 37). It ends with the Defend, at the team's next turn.
 CASTLE_GUARD_PERCENT = 50
+# Round limit (M3.3, our design rule, not a course requirement): a team match ends after
+# this many COMPLETE rounds (both teams have acted). If nobody has won by then, the
+# tie-breakers decide (see Battle.tie_break). The M1 cannon duel has no limit.
+ROUND_LIMIT = 30
 
 
 def clamp(value, low, high):
@@ -146,6 +152,14 @@ class Team:
     def alive_characters(self):
         return [character for character in self.characters if character.is_alive()]
 
+    def total_hp(self):
+        """HP of all the team's characters added up (defeated ones count 0)."""
+        return sum(character.hp for character in self.characters)
+
+    def total_max_hp(self):
+        """Current max HP of all the team's characters, defeated ones included (level-ups raise it)."""
+        return sum(character.max_hp for character in self.characters)
+
     def has_lost(self, castle_loss_enabled=True):
         """True if every character is defeated, or (if that rule is on) the castle has fallen."""
         if not self.alive_characters():
@@ -194,20 +208,30 @@ class Battle:
     an event list. main.py collects them once per frame with take_events().
     """
 
-    def __init__(self, roster=None, castle_loss_enabled=True):
+    def __init__(self, roster=None, castle_loss_enabled=True, first_side="left"):
         """roster: None for the M1 cannon duel, or {"left": [...], "right": [...]} with
         1-3 character classes per side, e.g. {"left": [Knight, Archer], "right": [Engineer]}.
 
         castle_loss_enabled: in team combat, whether a fallen castle loses the match.
         Set it to False if only defeating every enemy may win (the course's rule).
+
+        first_side: "left" or "right", the side that moves first in every round.
         """
         self._roster = roster
         self.castle_loss_enabled = castle_loss_enabled
+        self.first_side = first_side
         self.reset()
 
-    def reset(self):
-        """Start a fresh match (also used by the R key). Characters are created anew,
-        so their HP, EXP, levels and cooldowns start over."""
+    def reset(self, first_side=None):
+        """Start a fresh match (also used for a rematch). Characters are created anew,
+        so their HP, EXP, levels and cooldowns start over.
+
+        first_side: who moves first in the new match; None keeps the current first side.
+        """
+        if first_side is not None:
+            self.first_side = first_side
+        if self.first_side not in ("left", "right"):
+            raise ValueError(f"first_side must be 'left' or 'right', not {self.first_side!r}")
         self.castles = {"left": Castle("left"), "right": Castle("right")}
         self.cannons = {"left": Cannon("left"), "right": Cannon("right")}
         self.teams = None
@@ -217,11 +241,15 @@ class Battle:
                 characters = [role(role.__name__, side) for role in self._roster[side]]
                 self.teams[side] = Team(side, characters, self.castles[side])
         self.round_number = 1
-        self.active_side = "left"       # the left side always moves first
+        self.active_side = self.first_side
         self.projectile = None          # the shot in flight, or None
         self._shooter = None            # the character who fired it (None in the M1 duel)
         self._shot_damage = None        # the ShotDamage of the shot in flight
         self.winner = None              # None while playing, then "left", "right" or "draw"
+        # Why the match ended: "elimination", "castle", "tie_break" (after the round limit),
+        # "draw" (round limit, every tie-breaker equal) or "both_lost"; None while playing.
+        self.end_reason = None
+        self.tie_break_rule = None      # with "tie_break": the rule that decided it
         self._events = []
 
     def is_over(self):
@@ -344,11 +372,37 @@ class Battle:
             right_lost = self.teams["right"].has_lost(self.castle_loss_enabled)
         if left_lost and right_lost:
             self.winner = "draw"
-        elif left_lost:
-            self.winner = "right"
-        elif right_lost:
-            self.winner = "left"
+            self.end_reason = "both_lost"
+        elif left_lost or right_lost:
+            self.winner = "right" if left_lost else "left"
+            loser = other_side(self.winner)
+            if self.teams is not None and not self.teams[loser].alive_characters():
+                self.end_reason = "elimination"
+            else:
+                self.end_reason = "castle"
         return self.winner
+
+    def tie_break(self):
+        """Who wins a team match that reached the round limit: returns (winner, rule).
+
+        The rules, in order: more living characters; a higher share of character HP
+        (total HP / total current max HP); more castle HP left (as a share of the
+        castle's max HP). If all three are equal: ("draw", None). Shares are compared
+        by cross-multiplying (a/b > c/d exactly when a*d > c*b), so no floating-point
+        rounding can decide a match.
+        """
+        left, right = self.teams["left"], self.teams["right"]
+        rules = [
+            ("more living characters", len(left.alive_characters()), len(right.alive_characters())),
+            ("higher share of character HP",
+             left.total_hp() * right.total_max_hp(), right.total_hp() * left.total_max_hp()),
+            ("more castle HP left",
+             left.castle.total_hp() * right.castle.max_hp, right.castle.total_hp() * left.castle.max_hp),
+        ]
+        for rule, left_value, right_value in rules:
+            if left_value != right_value:
+                return ("left" if left_value > right_value else "right"), rule
+        return "draw", None
 
     def _launch(self, shooter, shot_damage):
         """Fire the active cannon. `shooter` is the character firing (None in the M1 duel)."""
@@ -425,18 +479,28 @@ class Battle:
             self._events.append({"type": "exp", "side": actor.side, "name": actor.name,
                                  "amount": exp, "levels": levels})
 
+        # A normal win (elimination or castle) always comes first, even on the last turn.
         if self.check_winner() is not None:
-            self._events.append({"type": "game_over", "winner": self.winner})
+            self._events.append({"type": "game_over", "winner": self.winner, "reason": self.end_reason})
+            return
+
+        # The round is complete when the turn would go back to the side that moves first.
+        round_complete = other_side(self.active_side) == self.first_side
+        if round_complete and self.teams is not None and self.round_number >= ROUND_LIMIT:
+            self.winner, self.tie_break_rule = self.tie_break()
+            self.end_reason = "draw" if self.winner == "draw" else "tie_break"
+            self._events.append({"type": "game_over", "winner": self.winner, "reason": self.end_reason})
             return
 
         self.active_side = other_side(self.active_side)
-        if self.active_side == "left":
-            self._start_round()             # left moves first, so its turn starts a new round
+        if round_complete:
+            self._start_round()
         self._start_turn(self.active_side)
         self._events.append({"type": "turn", "side": self.active_side})
 
     def _start_round(self):
-        """A new round: count it and tick every character's cooldown once."""
+        """A new round (the first side is to move again): count it and tick every
+        character's cooldown once. So cooldowns count rounds, never single turns."""
         self.round_number += 1
         if self.teams is not None:
             for team in self.teams.values():

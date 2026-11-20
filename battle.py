@@ -379,13 +379,25 @@ class Battle:
         through its own side (no friendly fire). (x, y) is the exact point where the
         shot first touched the thing it hit; ties go to the earlier kind in that list.
         """
-        enemy = self.teams[other_side(shot.side)]
-        x1, y1 = shot.x, shot.y
-        touches = []                                    # (fraction of the move, order, kind, slot)
-        for block in enemy.castle.alive_blocks():
-            fraction = segment_entry(x0, y0, x1, y1, block.rect())
-            if fraction is not None:
-                touches.append((fraction, 0, "block", None))
+        touches = self._touches(other_side(shot.side), x0, y0, shot.x, shot.y)
+        if not touches:
+            return None
+        fraction, _, kind, number = touches[0]
+        x, y = self._touch_point(x0, y0, shot.x, shot.y, fraction, kind)
+        return (kind, x, y, number if kind == "character" else None)
+
+    def _touches(self, enemy_side, x0, y0, x1, y1):
+        """Everything of `enemy_side` that the straight move from (x0, y0) to (x1, y1)
+        touches, nearest first: (fraction of the move, order, kind, number), where number
+        is the block's index in castle.blocks or the character's slot. The ground and the
+        edge of the field are included too; order breaks ties (blocks first)."""
+        enemy = self.teams[enemy_side]
+        touches = []
+        for index, block in enumerate(enemy.castle.blocks):
+            if not block.is_destroyed():
+                fraction = segment_entry(x0, y0, x1, y1, block.rect())
+                if fraction is not None:
+                    touches.append((fraction, 0, "block", index))
         for index, character in enumerate(enemy.characters):
             if character.is_alive():
                 fraction = segment_entry(x0, y0, x1, y1, enemy.character_rect(index))
@@ -396,12 +408,43 @@ class Battle:
         if x1 < 0 or x1 > FIELD_WIDTH:
             edge = 0 if x1 < 0 else FIELD_WIDTH
             touches.append(((edge - x0) / (x1 - x0), 3, "offscreen", None))
-        if not touches:
-            return None
-        fraction, _, kind, slot = min(touches)
+        touches.sort(key=lambda touch: touch[:2])
+        return touches
+
+    @staticmethod
+    def _touch_point(x0, y0, x1, y1, fraction, kind):
+        """The point `fraction` of the way along the move (on the ground surface for "ground")."""
         x = x0 + fraction * (x1 - x0)
         y = GROUND_Y if kind == "ground" else y0 + fraction * (y1 - y0)
-        return (kind, x, y, slot)
+        return x, y
+
+    def path_contacts(self, side, angle, power):
+        """A planning aid for the computer player (ai.py); it changes nothing.
+
+        Flies a shot from `side`'s cannon with this aim as if it could pass through
+        everything, and returns what its path touches, in order: (kind, number, x, y) for
+        each enemy block ("block", its index in castle.blocks) and living enemy character
+        ("character", its slot), ending with ("ground" or "offscreen", None, x, y) where
+        the path ends. The first entry is exactly what a real shot with this aim would hit
+        now; the later ones are what it would hit if the things before them were gone.
+        """
+        cannon = self.cannons[side]
+        shot = Projectile(cannon.x, cannon.y, clamp(angle, MIN_ANGLE, MAX_ANGLE),
+                          clamp(power, MIN_POWER, MAX_POWER), side)
+        contacts, listed = [], set()
+        for _ in range(MAX_STEPS):
+            x0, y0 = shot.x, shot.y
+            shot.step()
+            for fraction, _, kind, number in self._touches(other_side(side), x0, y0, shot.x, shot.y):
+                x, y = self._touch_point(x0, y0, shot.x, shot.y, fraction, kind)
+                if kind in ("ground", "offscreen"):
+                    contacts.append((kind, None, x, y))
+                    return contacts
+                if (kind, number) not in listed:
+                    listed.add((kind, number))
+                    contacts.append((kind, number, x, y))
+        contacts.append(("timeout", None, shot.x, shot.y))
+        return contacts
 
     def _end_shot(self, impact):
         """Apply a finished shot's explosion (or miss), award EXP, then end the turn.

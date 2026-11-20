@@ -8,7 +8,7 @@ import itertools
 import unittest
 
 from castle import (BLOCK_HP, DEFAULT_LAYOUT, MAX_BLOCKS, SLOT_COUNT, Block, Castle,
-                    layout_problem, slot_position)
+                    layout_problem, place_block, remove_block, slot_position)
 
 # Top-left corners (x, y) of the 8 cover slots, by hand. Slots 0-3 are the bottom row
 # (slot 0 nearest the team's characters); slots 4-7 sit on top of slots 0-3.
@@ -96,10 +96,79 @@ class LayoutTest(unittest.TestCase):
     def test_there_are_76_legal_layouts(self):
         # By hand: k bottom blocks and j raised blocks on top of them, k + j <= 6:
         # 1 + 4*2 + 6*4 + 4*8 + 1*11 = 76.
-        legal = [subset for size in range(SLOT_COUNT + 1)
-                 for subset in itertools.combinations(range(SLOT_COUNT), size)
-                 if layout_problem(subset) is None]
-        self.assertEqual(len(legal), 76)
+        self.assertEqual(len(legal_layouts()), 76)
+
+
+def legal_layouts():
+    """Every legal layout (76 of them), each as a sorted tuple."""
+    return [subset for size in range(SLOT_COUNT + 1)
+            for subset in itertools.combinations(range(SLOT_COUNT), size)
+            if layout_problem(subset) is None]
+
+
+class PlacementTest(unittest.TestCase):
+    """M3.4-B: what one click on a cover slot does on the placement screen."""
+
+    def test_placing_on_an_empty_slot_adds_a_block(self):
+        self.assertEqual(place_block((0, 1), 2), ((0, 1, 2), None))
+        self.assertEqual(place_block((), 3), ((3,), None))
+        self.assertEqual(place_block((1, 0), 4), ((0, 1, 4), None))     # kept in slot order
+
+    def test_a_raised_block_needs_a_block_under_it(self):
+        layout, problem = place_block((0,), 5)                         # slot 5 sits on slot 1
+        self.assertEqual(layout, (0,))
+        self.assertIn("needs a block under it", problem)
+        self.assertEqual(place_block((0, 1), 5), ((0, 1, 5), None))
+
+    def test_the_seventh_block_is_refused(self):
+        layout, problem = place_block(DEFAULT_LAYOUT, 6)
+        self.assertEqual(layout, DEFAULT_LAYOUT)
+        self.assertIn(f"at most {MAX_BLOCKS}", problem)
+
+    def test_a_slot_cannot_get_a_second_block(self):
+        layout, problem = place_block((0,), 0)
+        self.assertEqual(layout, (0,))
+        self.assertIn("only one block", problem)
+
+    def test_removing_a_block(self):
+        self.assertEqual(remove_block((0, 1, 2), 1), ((0, 2), (1,)))
+
+    def test_removing_a_supporting_block_also_removes_the_block_on_top(self):
+        self.assertEqual(remove_block((0, 1, 4, 5), 1), ((0, 4), (1, 5)))
+        self.assertEqual(remove_block(DEFAULT_LAYOUT, 0), ((1, 2, 3, 5), (0, 4)))
+
+    def test_removing_a_raised_block_keeps_the_block_under_it(self):
+        self.assertEqual(remove_block((0, 4), 4), ((0,), (4,)))
+
+    def test_removing_from_an_empty_slot_changes_nothing(self):
+        self.assertEqual(remove_block((0,), 3), ((0,), ()))
+
+    def test_every_click_on_every_legal_layout_leaves_a_legal_layout(self):
+        # The placement screen places on an empty slot and removes from an occupied one.
+        for layout in legal_layouts():
+            for slot in range(SLOT_COUNT):
+                if slot in layout:
+                    result, removed = remove_block(layout, slot)
+                    self.assertIn(slot, removed)
+                    self.assertEqual(sorted(result + removed), list(layout))
+                else:
+                    result, problem = place_block(layout, slot)
+                    self.assertEqual(result, layout if problem else tuple(sorted(layout + (slot,))))
+                self.assertIsInstance(result, tuple)
+                self.assertEqual(list(result), sorted(result))
+                self.assertIsNone(layout_problem(result), (layout, slot, result))
+
+    def test_every_legal_layout_can_be_built_by_clicks_and_cleared_to_zero_blocks(self):
+        for target in legal_layouts():
+            layout = ()
+            for slot in target:                     # sorted: supports come first
+                layout, problem = place_block(layout, slot)
+                self.assertIsNone(problem)
+            self.assertEqual(layout, target)
+            while layout:
+                layout, _ = remove_block(layout, layout[0])
+            self.assertEqual(layout, ())
+        self.assertIsNone(layout_problem(()))
 
 
 class BlastTest(unittest.TestCase):

@@ -6,6 +6,7 @@ Expected numbers are worked out by hand, or come from an independent simulation
 script (its own physics and its own collision check, sampling each step's path
 finely), not from battle.py itself. Team combat rules are in test_combat.py.
 """
+import copy
 import os
 import subprocess
 import sys
@@ -232,6 +233,80 @@ class ShotTest(unittest.TestCase):
         first = shot_result(play_shot(team_battle(), 60, 88))
         second = shot_result(play_shot(team_battle(), 60, 88))
         self.assertEqual(first, second)
+
+
+class PathContactsTest(unittest.TestCase):
+    """M3.4-B: path_contacts() lists what a shot's path crosses, for the computer's planning.
+    It uses the same flight and collision code as real shots, and changes nothing."""
+
+    AIMS = [(angle, power) for angle in (30, 45, 60) for power in range(60, 101, 4)]
+
+    def test_the_first_contact_is_exactly_what_a_real_shot_hits(self):
+        for layouts in (None, OPEN, {"left": (0, 4, 2), "right": (0, 4, 2)}):
+            for angle, power in self.AIMS:
+                with self.subTest(layouts=layouts, angle=angle, power=power):
+                    battle = team_battle(layouts)
+                    kind, ref, x, y = battle.path_contacts("left", angle, power)[0]
+                    result = shot_result(play_shot(battle, angle, power))
+                    if result["type"] == "miss":
+                        self.assertEqual(kind, "offscreen")
+                    else:
+                        self.assertEqual(kind, result["kind"])
+                        if kind == "character":
+                            self.assertEqual(battle.teams["right"].characters[ref].name, result["target"])
+                    self.assertAlmostEqual(x, result["x"], places=6)
+                    self.assertAlmostEqual(y, result["y"], places=6)
+
+    def test_the_path_goes_on_behind_the_first_block(self):
+        battle = team_battle()
+        contacts = battle.path_contacts("left", 45, 76)        # comes down on the slot-2 block
+        kinds = [kind for kind, _, _, _ in contacts]
+        self.assertEqual(kinds[0], "block")
+        self.assertIn(kinds[-1], ("ground", "offscreen"))
+        self.assertGreaterEqual(len(contacts), 3)
+        refs = [(kind, ref) for kind, ref, _, _ in contacts]
+        self.assertEqual(len(refs), len(set(refs)))              # each thing is listed once
+        # With the first block destroyed, a real shot hits what the path listed next.
+        battle.castles["right"].blocks[contacts[0][1]].take_damage(100)
+        _, _, next_x, next_y = contacts[1]
+        result = shot_result(play_shot(battle, 45, 76))
+        self.assertAlmostEqual(result["x"], next_x, places=6)
+        self.assertAlmostEqual(result["y"], next_y, places=6)
+
+    def test_destroyed_blocks_and_defeated_characters_are_not_listed(self):
+        battle = team_battle(OPEN)
+        first = battle.path_contacts("left", 45, 81)[0]          # the right Knight
+        self.assertEqual(first[:2], ("character", 0))
+        battle.teams["right"].characters[0].take_damage(500)
+        self.assertNotIn(("character", 0), [c[:2] for c in battle.path_contacts("left", 45, 81)])
+
+    def test_the_right_side_path_is_the_mirror_image(self):
+        battle = team_battle()
+        for angle, power in self.AIMS:
+            left = battle.path_contacts("left", angle, power)
+            right = battle.path_contacts("right", angle, power)
+            self.assertEqual([c[:2] for c in left], [c[:2] for c in right])
+            for (_, _, lx, ly), (_, _, rx, ry) in zip(left, right):
+                self.assertAlmostEqual(rx, 1280 - lx, places=6)
+                self.assertAlmostEqual(ry, ly, places=6)
+
+    def test_tracing_a_path_changes_nothing(self):
+        battle = team_battle()
+        battle.cannons["left"].adjust_angle(7)
+        twin = copy.deepcopy(battle)
+        for angle, power in self.AIMS:
+            battle.path_contacts("left", angle, power)
+            battle.path_contacts("right", angle, power)
+        for side in ("left", "right"):
+            self.assertEqual([b.hp for b in battle.castles[side].blocks],
+                             [b.hp for b in twin.castles[side].blocks])
+            self.assertEqual([c.hp for c in battle.teams[side].characters],
+                             [c.hp for c in twin.teams[side].characters])
+            self.assertEqual((battle.cannons[side].angle, battle.cannons[side].power),
+                             (twin.cannons[side].angle, twin.cannons[side].power))
+        self.assertEqual((battle.active_side, battle.projectile, battle.round_number),
+                         (twin.active_side, twin.projectile, twin.round_number))
+        self.assertEqual(battle.take_events(), twin.take_events())
 
 
 class TurnTest(unittest.TestCase):

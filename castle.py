@@ -1,7 +1,9 @@
 """Cover blocks for Castle Siege: Block, the cover slots and Castle.
 
 Each team builds its own cover (its "castle") before the battle: up to MAX_BLOCKS
-blocks on the SLOT_COUNT fixed slots in front of its characters. Enemy shots hit
+blocks on the SLOT_COUNT fixed slots in front of its characters. layout_problem() is
+the one place that decides whether a layout is legal; place_block() and remove_block()
+are the placement screen's clicks. Enemy shots hit
 the blocks, and a standing block between an explosion and a character shields
 that character (battle.py applies that rule). Blocks never decide who wins:
 only defeating every enemy character does.
@@ -25,8 +27,8 @@ COLUMN_X = {"left": (172, 204, 236, 268), "right": (1076, 1044, 1012, 980)}
 # Slots 0-3 are the bottom row, on the ground (slot 0 next to the characters).
 # Slots 4-7 are the raised row: slot 4 sits on top of slot 0, slot 5 on slot 1, ...
 RAISED = 4
-# Used until the placement screen exists (M3.4-B), and for quick tests: the whole
-# bottom row plus two raised blocks next to the characters.
+# The layout the placement screen starts with (and the one tests use when they don't
+# say otherwise): the whole bottom row plus two raised blocks next to the characters.
 DEFAULT_LAYOUT = (0, 1, 2, 3, 4, 5)
 
 
@@ -49,9 +51,45 @@ def layout_problem(layout):
         return "a slot can hold only one block"
     if len(slots) > MAX_BLOCKS:
         return f"a team can place at most {MAX_BLOCKS} blocks"
-    if any(slot >= RAISED and slot - RAISED not in slots for slot in slots):
+    if floating_blocks(slots):
         return "a raised block needs a block under it"
     return None
+
+
+def floating_blocks(slots):
+    """The raised slots in `slots` that have no block under them (slot 4 stands on slot 0, ...)."""
+    return [slot for slot in slots if slot >= RAISED and slot - RAISED not in slots]
+
+
+def place_block(layout, slot):
+    """A click on the empty slot `slot` of the placement screen (M3.4-B).
+
+    Returns (new layout, None) if the block may go there, or (the unchanged layout, the
+    reason) if layout_problem() refuses the result. Layouts are tuples in slot order, so
+    the caller's layout is never changed.
+    """
+    candidate = tuple(sorted(tuple(layout) + (slot,)))
+    problem = layout_problem(candidate)
+    if problem is not None:
+        return tuple(layout), problem
+    return candidate, None
+
+
+def remove_block(layout, slot):
+    """A click on the occupied slot `slot` of the placement screen (M3.4-B).
+
+    Removes that block, and then every block left floating (the raised block that was on
+    top of it), so a legal layout stays legal (layout_problem).
+    Returns (new layout, the slots removed). An empty slot changes nothing.
+    """
+    remaining = [s for s in layout if s != slot]
+    if len(remaining) == len(tuple(layout)):
+        return tuple(layout), ()
+    while floating_blocks(remaining):         # removing a block can only leave blocks floating
+        floating = floating_blocks(remaining)
+        remaining = [s for s in remaining if s not in floating]
+    removed = tuple(sorted(set(layout) - set(remaining)))
+    return tuple(sorted(remaining)), removed
 
 
 class Block:

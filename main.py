@@ -3,12 +3,18 @@
 Screens (Game.state):
   "select"  team selection: mode (Player vs AI or two players), AI level, team size
             (1v1, 2v2 or 3v3) and the characters
+  "cover"   cover placement (M3.4-B): one team at a time clicks its 8 cover slots to
+            place up to 6 blocks (Game.placing says which team)
   "battle"  the battlefield: pick a character, aim the cannon, pick an action
   "result"  the battlefield with the winner (or DRAW), plus Rematch / Change teams buttons
 Each team has its cover blocks in front of its characters and one cannon in front of
-the cover. Until the placement screen exists (M3.4-B), both teams use the default cover.
+the cover.
 
-Player vs AI: the human plays LEFT and the computer (ai.py) picks and plays RIGHT.
+Setup flow:  Player vs AI:  select -> LEFT cover -> battle (the computer places RIGHT's cover)
+             Two players:   select -> LEFT cover -> RIGHT cover -> battle
+Back on a cover screen returns to the previous step; nothing chosen is lost.
+
+Player vs AI: the human plays LEFT and the computer (ai.py) picks, places and plays RIGHT.
 Two players: both teams play on this computer and take turns ("hot seat").
 All game rules live in battle.py, castle.py and characters.py: this file reads
 the mouse and keyboard, calls Battle methods and draws what the Battle reports.
@@ -20,9 +26,16 @@ import math
 import pygame
 
 from ai import DIFFICULTY_SETTINGS, AIController
-from battle import BLAST_RADIUS, FIELD_WIDTH, MAX_TEAM_SIZE, ROUND_LIMIT, Battle, direction, other_side
-from castle import BLOCK_SIZE, COLUMN_X, GROUND_Y
-from characters import ARCHETYPES, MAX_LEVEL, Archer, Knight
+from battle import (BLAST_RADIUS, CHARACTER_HEIGHT, FIELD_WIDTH, MAX_TEAM_SIZE, ROUND_LIMIT, SLOT_X,
+                    Battle, Cannon, direction, other_side)
+from castle import (BLOCK_SIZE, COLUMN_X, DEFAULT_LAYOUT, GROUND_Y, MAX_BLOCKS, SLOT_COUNT,
+                    layout_problem, place_block, remove_block, slot_position)
+from characters import ARCHETYPES, MAX_LEVEL, Archer
+from drawing import (ACTIVE_RING_COLOR, AIM_COLOR, CANNON_COLOR, COOLDOWN_COLOR, DEFEATED_COLOR,
+                     DEFEND_COLOR, DIM_TEXT, GROUND_COLOR, GUARD_COLOR, LIGHT_TEXT, MENU_COLOR,
+                     OPEN_SLOT_COLOR, PANEL_COLOR, READY_COLOR, SHOT_COLOR, SKY_COLOR, TEAM_COLORS,
+                     TEXT_COLOR, WOOD, Button, block_color, draw_figure, draw_text, hp_bar_width,
+                     wrap_text)
 
 WINDOW_WIDTH = FIELD_WIDTH        # 1280
 WINDOW_HEIGHT = 720
@@ -31,55 +44,15 @@ AI_DELAY_FRAMES = 40              # the computer waits this long (2/3 s) before 
 EXPLOSION_FRAMES = 20             # how long an explosion stays on screen
 LOG_LINES = 6                     # combat-log lines shown at once
 PANEL_TOP = 580                   # the control panel fills the bottom of the window
-
-SKY_COLOR = (160, 205, 235)
-GROUND_COLOR = (96, 140, 72)
-MENU_COLOR = (225, 232, 240)
-PANEL_COLOR = (38, 46, 58)
-TEXT_COLOR = (25, 25, 35)
-LIGHT_TEXT = (235, 238, 242)
-DIM_TEXT = (160, 166, 176)
-CANNON_COLOR = (55, 55, 60)
-ACTIVE_RING_COLOR = (255, 215, 0)
-AIM_COLOR = (230, 110, 20)
-SHOT_COLOR = (20, 20, 20)
-TEAM_COLORS = {"left": (60, 100, 200), "right": (200, 70, 60)}
-STONE_COLORS = {"left": (150, 162, 195), "right": (196, 156, 142)}   # an undamaged block
-SKIN = (240, 205, 170)
-STEEL = (175, 180, 190)
-WOOD = (130, 85, 45)
-HARD_HAT = (240, 200, 40)
-HOOD = (60, 130, 60)
-DEFEATED_COLOR = (120, 120, 120)
-DEFEND_COLOR = (90, 170, 255)
-GUARD_COLOR = (30, 110, 235)       # Cover Guard: outline on the blocks and the GUARDED badge
-COOLDOWN_COLOR = (255, 225, 120)  # these two are drawn on the green ground strip
-READY_COLOR = (235, 240, 235)
-BUTTON_COLOR = (70, 95, 130)
-BUTTON_CHOSEN = (225, 170, 40)
-BUTTON_OFF = (95, 98, 105)
+COVER_HELP_TOP = 122              # the placement screen's instructions start at this y ...
+COVER_HELP_STEP = 26              # ... one line every 26 px
 
 
 # ----- small helpers -------------------------------------------------------------
 
-def block_color(side, hp, max_hp):
-    """A block gets darker as it loses HP, so every hit is visible.
-
-    Full health keeps 100 % of the colour; a block with almost no HP left keeps 40 %.
-    """
-    shade = 0.4 + 0.6 * hp / max_hp
-    return tuple(int(channel * shade) for channel in STONE_COLORS[side])
-
-
-def hp_bar_width(character, full_width):
-    """Length of a character's HP bar: full when unhurt, 0 when defeated."""
-    return int(full_width * character.hp / character.max_hp)
-
-
-def draw_text(screen, text, font, color, **position):
-    """Draw text placed by one keyword, e.g. center=(x, y) or topleft=(x, y)."""
-    image = font.render(text, True, color)
-    screen.blit(image, image.get_rect(**position))
+def slot_rect(side, slot):
+    """The clickable square of cover slot `slot` (0-7) of `side`: exactly where its block stands."""
+    return pygame.Rect(slot_position(side, slot), (BLOCK_SIZE, BLOCK_SIZE))
 
 
 def guard_badge_rect(side):
@@ -92,19 +65,6 @@ def guard_badge_rect(side):
     badge = pygame.Rect(0, 0, 84, 20)
     badge.center = (center_x, GROUND_Y - 2 * BLOCK_SIZE - 20)       # y 476: above the raised row
     return badge
-
-
-def wrap_text(text, font, max_width):
-    """Split text into lines that each fit in max_width pixels."""
-    lines, line = [], ""
-    for word in text.split():
-        candidate = f"{line} {word}".strip()
-        if line and font.size(candidate)[0] > max_width:
-            lines.append(line)
-            line = word
-        else:
-            line = candidate
-    return lines + [line] if line else lines
 
 
 def describe_event(event):
@@ -148,60 +108,6 @@ def describe_event(event):
             return lines + ["It's a draw!"]
         return lines + [f"{event['winner'].upper()} wins!"]
     return []    # "fire" and "turn" are shown by the HUD instead
-
-
-def draw_figure(screen, role, center_x, top, facing, body_color):
-    """A simple figure for a character role, standing in the 28 x 44 box whose top is `top`.
-
-    `facing` is +1 (looking right) or -1 (looking left); the shield, bow or hammer
-    is held on that side.
-    """
-    pygame.draw.rect(screen, body_color, (center_x - 9, top + 15, 18, 29), border_radius=4)
-    pygame.draw.circle(screen, SKIN, (center_x, top + 8), 7)
-    front = center_x + facing * 11
-    if role is Knight:
-        pygame.draw.rect(screen, STEEL, (center_x - 7, top, 14, 7),
-                         border_top_left_radius=6, border_top_right_radius=6)           # helmet
-        pygame.draw.rect(screen, STEEL, (front - 5, top + 18, 10, 16), border_radius=3)  # shield
-        pygame.draw.rect(screen, TEXT_COLOR, (front - 5, top + 18, 10, 16), 1, border_radius=3)
-    elif role is Archer:
-        pygame.draw.polygon(screen, HOOD, [(center_x - 8, top + 8), (center_x + 8, top + 8),
-                                           (center_x, top - 3)])                        # hood
-        bow = pygame.Rect(front - 6, top + 12, 12, 26)
-        if facing > 0:
-            pygame.draw.arc(screen, WOOD, bow, -math.pi / 2, math.pi / 2, 3)
-        else:
-            pygame.draw.arc(screen, WOOD, bow, math.pi / 2, 3 * math.pi / 2, 3)
-        pygame.draw.line(screen, LIGHT_TEXT, (front, top + 12), (front, top + 38), 1)    # string
-    else:                                                                               # Engineer
-        pygame.draw.rect(screen, HARD_HAT, (center_x - 8, top, 16, 6),
-                         border_top_left_radius=7, border_top_right_radius=7)           # hard hat
-        pygame.draw.line(screen, WOOD, (front, top + 20), (front, top + 40), 3)          # hammer
-        pygame.draw.rect(screen, STEEL, (front - 5, top + 16, 10, 6))
-
-
-class Button:
-    """A clickable rectangle with a label. A disabled button is greyed out and ignores clicks."""
-
-    def __init__(self, x, y, width, height, label):
-        self.rect = pygame.Rect(x, y, width, height)
-        self.label = label
-        self.enabled = True
-        self.chosen = False         # drawn highlighted (e.g. the chosen team size)
-
-    def is_clicked(self, pos):
-        return self.enabled and self.rect.collidepoint(pos)
-
-    def draw(self, screen, font):
-        if not self.enabled:
-            fill, text_color = BUTTON_OFF, DIM_TEXT
-        elif self.chosen:
-            fill, text_color = BUTTON_CHOSEN, TEXT_COLOR
-        else:
-            fill, text_color = BUTTON_COLOR, LIGHT_TEXT
-        pygame.draw.rect(screen, fill, self.rect, border_radius=6)
-        pygame.draw.rect(screen, TEXT_COLOR, self.rect, 2, border_radius=6)
-        draw_text(screen, self.label, font, text_color, center=self.rect.center)
 
 
 class TeamSelection:
@@ -256,14 +162,50 @@ class TeamSelection:
         return {side: list(picks) for side, picks in self.picks.items()}
 
 
-class Game:
-    """Connects the mouse, keyboard and screen to the team selection and one Battle."""
+class CoverSetup:
+    """The cover layouts chosen on the placement screens (no drawing happens here).
 
-    def __init__(self, screen):
+    Each side keeps its own layout: a tuple of slot numbers, so the two sides can never
+    share one list. Both start as DEFAULT_LAYOUT. Clicks go through castle.place_block()
+    and castle.remove_block(), which check with castle.layout_problem(), so a layout
+    stays legal and no rule is repeated here. Cover slots never depend on the team size
+    or roles (no character stands on one), so the layouts are kept when teams change.
+    """
+
+    def __init__(self):
+        self.layouts = {"left": DEFAULT_LAYOUT, "right": DEFAULT_LAYOUT}
+
+    def click_slot(self, side, slot):
+        """A click on cover slot `slot` of `side`: place a block on an empty slot, or remove
+        the block on an occupied one. Returns a short message for the status line."""
+        layout = self.layouts[side]
+        if slot in layout:
+            self.layouts[side], removed = remove_block(layout, slot)
+            if len(removed) > 1:
+                return ("Block removed, and the raised block on top of it too "
+                        "(a raised block needs a block under it).")
+            return "Block removed."
+        self.layouts[side], problem = place_block(layout, slot)
+        if problem is not None:
+            return f"No block there: {problem}."
+        return "Block placed."
+
+
+class Game:
+    """Connects the mouse, keyboard and screen to the team selection, the cover placement
+    and one Battle.
+
+    ai_seed: a number makes the computer's choices (team, cover, moves) repeatable; the
+    tests use it. None (the real game) gives a different computer opponent every time.
+    """
+
+    def __init__(self, screen, ai_seed=None):
         self.screen = screen
+        self.ai_seed = ai_seed
         # Font(None, size) uses Pygame's built-in font. (SysFont scans the system's
         # installed fonts, and on some Windows machines that scan crashes.)
         self.big_font = pygame.font.Font(None, 80)
+        self.title_font = pygame.font.Font(None, 54)
         self.font = pygame.font.Font(None, 30)
         self.small_font = pygame.font.Font(None, 24)
         self.tiny_font = pygame.font.Font(None, 19)
@@ -271,6 +213,8 @@ class Game:
         self.space_released = True    # fire only once per SPACE press (see handle_key)
         self.state = "select"
         self.selection = TeamSelection()
+        self.setup = CoverSetup()
+        self.placing = "left"         # the team whose cover is being placed (state "cover")
         self.battle = None
         self.ai = None                # the AIController playing RIGHT, or None (two players)
         self.ai_wait = 0              # frames the computer has waited on this turn
@@ -293,7 +237,10 @@ class Game:
         for side, first_x in (("left", 60), ("right", 660)):
             for i, role in enumerate(ARCHETYPES):
                 self.card_rects[(side, role)] = pygame.Rect(first_x + i * 190, 210, 170, 265)
-        self.start_button = Button(515, 515, 250, 56, "START BATTLE")
+        self.start_button = Button(515, 515, 250, 56, "PLACE COVER")
+        # Cover placement screen.
+        self.back_button = Button(430, PANEL_TOP + 42, 190, 46, "Back")
+        self.confirm_button = Button(660, PANEL_TOP + 42, 190, 46, "Confirm")
         # Battle screen.
         self.action_buttons = {
             "attack": Button(450, PANEL_TOP + 12, 120, 42, "ATTACK"),
@@ -306,11 +253,13 @@ class Game:
 
     # ----- starting matches ------------------------------------------------------
 
-    def start_battle(self, roster, ai=None):
+    def start_battle(self, roster, layouts, ai=None):
         """Start a match. `ai` is the AIController playing RIGHT, or None if two people play."""
-        self.battle = Battle(roster=roster)
+        self.battle = Battle(roster=roster, layouts=layouts)
         self.ai = ai
         self.begin_match()
+        if ai is not None:
+            self.log.append(f"AI ({ai.difficulty.capitalize()}) placed {len(layouts['right'])} cover blocks.")
 
     def rematch(self):
         """Play again with the same teams and cover (the Rematch button or R). The side that
@@ -332,16 +281,54 @@ class Game:
         self.refresh_buttons()
 
     def try_start(self):
+        """PLACE COVER (or Enter) on the selection screen: go on to the LEFT cover screen."""
         if not self.selection.is_complete():
             size = self.selection.team_size
             self.message = f"Each team needs exactly {size} character{'s' if size > 1 else ''}."
+        else:
+            self.begin_cover("left")
+
+    # ----- cover placement -----------------------------------------------------------
+
+    def begin_cover(self, side):
+        self.state = "cover"
+        self.placing = side
+        self.message = f"{side.upper()} team: click the slots to place or remove blocks, then press Confirm."
+
+    def click_cover(self, pos):
+        for slot in range(SLOT_COUNT):
+            if slot_rect(self.placing, slot).collidepoint(pos):
+                self.message = self.setup.click_slot(self.placing, slot)
+                return
+        if self.back_button.is_clicked(pos):
+            self.back_from_cover()
+        elif self.confirm_button.is_clicked(pos):
+            self.confirm_cover()
+
+    def back_from_cover(self):
+        """Back: RIGHT's cover screen returns to LEFT's, LEFT's to team selection. Nothing is lost."""
+        if self.placing == "right":
+            self.begin_cover("left")
+        else:
+            self.state = "select"
+            self.message = "Change the teams, then press PLACE COVER."
+
+    def confirm_cover(self):
+        """Confirm: RIGHT places its cover next (two players), or the battle starts."""
+        layout = self.setup.layouts[self.placing]
+        problem = layout_problem(layout)
+        if problem is not None:        # clicks always keep the layout legal; this is a safety net
+            self.message = f"This cover can't be used: {problem}."
+            return
+        if self.placing == "left" and not self.selection.vs_ai:
+            self.begin_cover("right")
         elif self.selection.vs_ai:
-            ai = AIController("right", self.selection.difficulty)
+            ai = AIController("right", self.selection.difficulty, seed=self.ai_seed)
             roster = {"left": list(self.selection.picks["left"]),
                       "right": ai.pick_team(self.selection.team_size)}
-            self.start_battle(roster, ai)
+            self.start_battle(roster, {"left": layout, "right": ai.choose_layout()}, ai)
         else:
-            self.start_battle(self.selection.roster())
+            self.start_battle(self.selection.roster(), dict(self.setup.layouts))
 
     def is_ai_turn(self):
         """True while it is the computer's turn to act (it acts by itself in update())."""
@@ -405,6 +392,11 @@ class Game:
         elif self.state == "select":
             if key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                 self.try_start()
+        elif self.state == "cover":
+            if key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                self.confirm_cover()
+            elif key == pygame.K_BACKSPACE:
+                self.back_from_cover()
         elif key == pygame.K_r:
             self.rematch()
         elif self.state == "battle" and self.battle.can_fire() and not self.is_ai_turn():
@@ -436,13 +428,15 @@ class Game:
         self.refresh_buttons()                     # decide using the situation right now
         if self.state == "select":
             self.click_selection(pos)
+        elif self.state == "cover":
+            self.click_cover(pos)
         elif self.state == "battle":
             self.click_battle(pos)
         elif self.rematch_button.is_clicked(pos):
             self.rematch()
         elif self.change_teams_button.is_clicked(pos):
             self.state = "select"
-            self.message = "Change the teams, then press START BATTLE."
+            self.message = "Change the teams, then press PLACE COVER."
         self.refresh_buttons()
 
     def click_selection(self, pos):
@@ -508,7 +502,7 @@ class Game:
     def update(self):
         if self.is_ai_turn():
             self.update_ai()
-        if self.battle is not None and self.state != "select":
+        if self.battle is not None and self.state in ("battle", "result"):
             self.battle.update()
             for event in self.battle.take_events():
                 self.show_event(event)
@@ -613,6 +607,9 @@ class Game:
         if self.state == "select":
             self.draw_selection()
             return
+        if self.state == "cover":
+            self.draw_cover_screen()
+            return
         self.draw_battlefield()
         self.draw_hud()
         self.draw_panel()
@@ -636,7 +633,7 @@ class Game:
                   + ("   (you)" if self.selection.vs_ai else ""),
                   self.font, TEAM_COLORS["left"], topleft=(60, 180))
         if self.selection.vs_ai:
-            right_title = f"RIGHT TEAM   the computer picks {size} at START"
+            right_title = f"RIGHT TEAM   the computer picks {size} and its cover"
         else:
             right_title = f"RIGHT TEAM   {len(self.selection.picks['right'])}/{size} chosen"
         draw_text(self.screen, right_title, self.font, TEAM_COLORS["right"], topleft=(660, 180))
@@ -645,7 +642,7 @@ class Game:
         draw_text(self.screen, self.message, self.small_font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 495))
         self.start_button.draw(self.screen, self.font)
         draw_text(self.screen, "Slot 1 stands at the front, behind the cover. Both teams have the same size. "
-                  "Enter = start, Esc = quit.", self.small_font, TEXT_COLOR,
+                  "Enter = next, Esc = quit.", self.small_font, TEXT_COLOR,
                   center=(WINDOW_WIDTH // 2, 600))
         draw_text(self.screen, "Win by defeating every enemy character. Cover blocks only protect: "
                   "destroying them does not win.", self.small_font, TEXT_COLOR,
@@ -677,6 +674,110 @@ class Game:
             label = f"Slot {slot}" + (" (front)" if slot == 1 else "")
             draw_text(self.screen, label, self.small_font, TEAM_COLORS[side],
                       center=(rect.centerx, rect.bottom - 18))
+
+    # ----- drawing: cover placement ------------------------------------------------
+
+    def cover_title(self):
+        return f"{self.placing.upper()} TEAM: PLACE YOUR COVER"
+
+    def cover_count_text(self):
+        return f"Blocks: {len(self.setup.layouts[self.placing])} / {MAX_BLOCKS}"
+
+    def cover_help_lines(self):
+        return ["Click an empty slot to place a block (100 HP). Click a block to remove it.",
+                f"Up to {MAX_BLOCKS} blocks. A raised block needs a block under it: "
+                "removing that block also removes the one on top.",
+                "Blocks stop enemy shots and shield the characters behind them.",
+                "Destroying cover never wins: only defeating every enemy character does."]
+
+    def cover_legend_y(self):
+        """y of the middle of the legend row, just under the instructions."""
+        return COVER_HELP_TOP + COVER_HELP_STEP * len(self.cover_help_lines()) + 14
+
+    def cover_text_bottom(self):
+        """The lowest y the placement screen's title, instructions and legend reach."""
+        return self.cover_legend_y() + 12
+
+    def cover_next_step(self):
+        if self.placing == "right":
+            return "Confirm: the battle starts."
+        if self.selection.vs_ai:
+            return "Confirm: the battle starts (the computer places its own cover)."
+        return "Confirm: RIGHT places its cover next."
+
+    def draw_cover_screen(self):
+        """One team's side of the battlefield: its characters, its cannon and its 8 cover
+        slots, drawn exactly where they stand in the battle. The other team's cover stays hidden."""
+        side = self.placing
+        self.screen.fill(SKY_COLOR)
+        pygame.draw.rect(self.screen, GROUND_COLOR, (0, GROUND_Y, WINDOW_WIDTH, PANEL_TOP - GROUND_Y))
+        draw_text(self.screen, self.cover_title(), self.title_font, TEAM_COLORS[side],
+                  center=(WINDOW_WIDTH // 2, 42))
+        draw_text(self.screen, self.cover_count_text(), self.font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 86))
+        for i, line in enumerate(self.cover_help_lines()):
+            draw_text(self.screen, line, self.small_font, TEXT_COLOR,
+                      center=(WINDOW_WIDTH // 2, COVER_HELP_TOP + i * COVER_HELP_STEP))
+        self.draw_cover_legend(side)
+        for index, role in enumerate(self.selection.picks[side]):
+            center_x, top = SLOT_X[side][index], GROUND_Y - CHARACTER_HEIGHT
+            draw_figure(self.screen, role, center_x, top, direction(side), TEAM_COLORS[side])
+            draw_text(self.screen, role.__name__, self.tiny_font, TEAM_COLORS[side],
+                      center=(center_x, top - 14 - (18 if index == 1 else 0)))
+        self.draw_cannon(Cannon(side), is_active=False)
+        for slot in range(SLOT_COUNT):
+            self.draw_slot(side, slot, self.setup.layouts[side])
+        middle_x = COLUMN_X["left"][0] + 2 * BLOCK_SIZE                 # over the four slot columns
+        draw_text(self.screen, "COVER SLOTS", self.tiny_font, TEAM_COLORS[side],
+                  center=(middle_x if side == "left" else WINDOW_WIDTH - middle_x, GROUND_Y - 2 * BLOCK_SIZE - 12))
+        other = other_side(side)
+        if side == "right":
+            note = "LEFT's cover stays hidden until the battle starts."
+        elif self.selection.vs_ai:
+            note = "The computer places the RIGHT cover when the battle starts."
+        else:
+            note = "RIGHT places its own cover next, without seeing LEFT's."
+        draw_text(self.screen, note, self.small_font, TEAM_COLORS[other],
+                  center=(WINDOW_WIDTH // 4 * (3 if other == "right" else 1), 420))
+        pygame.draw.rect(self.screen, PANEL_COLOR, (0, PANEL_TOP, WINDOW_WIDTH, WINDOW_HEIGHT - PANEL_TOP))
+        draw_text(self.screen, self.message, self.small_font, LIGHT_TEXT, center=(WINDOW_WIDTH // 2, PANEL_TOP + 22))
+        self.back_button.draw(self.screen, self.font)
+        self.confirm_button.draw(self.screen, self.font)
+        draw_text(self.screen, f"{self.cover_next_step()}   Enter = Confirm, Backspace = Back, Esc = quit.",
+                  self.tiny_font, DIM_TEXT, center=(WINDOW_WIDTH // 2, PANEL_TOP + 114))
+
+    def draw_cover_legend(self, side):
+        """One row under the instructions: what the three kinds of slot look like."""
+        items = [("block", "Block: click to remove"), ("open", "Empty slot: click to place"),
+                 ("closed", "No block allowed here now")]
+        widths = [30 + self.small_font.size(text)[0] for _, text in items]
+        x = (WINDOW_WIDTH - sum(widths) - 50 * (len(items) - 1)) // 2
+        y = self.cover_legend_y()
+        for (kind, text), width in zip(items, widths):
+            sample = pygame.Rect(x, y - 11, 22, 22)
+            if kind == "block":
+                pygame.draw.rect(self.screen, block_color(side, 1, 1), sample)
+                pygame.draw.rect(self.screen, TEXT_COLOR, sample, 1)
+            elif kind == "open":
+                pygame.draw.rect(self.screen, OPEN_SLOT_COLOR, sample)
+                pygame.draw.rect(self.screen, TEAM_COLORS[side], sample, 2)
+            else:
+                pygame.draw.rect(self.screen, DIM_TEXT, sample, 1)
+            draw_text(self.screen, text, self.small_font, TEXT_COLOR, midleft=(x + 30, y))
+            x += width + 50
+
+    def draw_slot(self, side, slot, layout):
+        """An occupied slot shows its block; a slot that can take a block is light with a "+";
+        a slot that can't take one right now (castle.place_block says why) is only outlined."""
+        rect = slot_rect(side, slot)
+        if slot in layout:
+            pygame.draw.rect(self.screen, block_color(side, 1, 1), rect)
+            pygame.draw.rect(self.screen, TEXT_COLOR, rect, 1)
+        elif place_block(layout, slot)[1] is None:
+            pygame.draw.rect(self.screen, OPEN_SLOT_COLOR, rect)
+            pygame.draw.rect(self.screen, TEAM_COLORS[side], rect, 2)
+            draw_text(self.screen, "+", self.font, TEAM_COLORS[side], center=rect.center)
+        else:
+            pygame.draw.rect(self.screen, DIM_TEXT, rect, 1)
 
     # ----- drawing: the battlefield --------------------------------------------------
 
@@ -824,7 +925,10 @@ class Game:
         # Right: the combat log.
         draw_text(self.screen, "Combat log   (R: rematch, Esc: quit)", self.tiny_font, DIM_TEXT,
                   topleft=(860, PANEL_TOP + 8))
-        for i, line in enumerate(self.log[-LOG_LINES:]):
+        lines = []                                 # long lines (the AI's reasons) are wrapped
+        for line in self.log[-LOG_LINES:]:
+            lines.extend(wrap_text(line, self.tiny_font, WINDOW_WIDTH - 870))
+        for i, line in enumerate(lines[-LOG_LINES:]):
             draw_text(self.screen, line, self.tiny_font, LIGHT_TEXT, topleft=(860, PANEL_TOP + 28 + i * 19))
 
     def draw_result(self):

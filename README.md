@@ -6,12 +6,13 @@ stands behind its own cover blocks and shares one cannon standing in front of th
 teams take turns: pick a character, aim the cannon, and Attack, Defend or use a Special ability.
 **You win by defeating every enemy character.**
 
-**Current status: Milestone 3.4-A — combat foundation.**
-- Only elimination wins. Castle destruction is no longer a victory condition.
-- Each team's cover is a layout of up to 6 blocks on 8 fixed slots, and cover shields characters
-  from explosions.
-- Both teams currently use the same default cover. Choosing your own layout on a placement screen
-  is planned for M3.4-B, and the characters' run to the cannon for M3.4-C.
+**Current status: Milestone 3.4-B — cover placement and a cover-aware computer opponent.**
+- Only elimination wins. Castle destruction is not a victory condition.
+- Before each battle, every team places its own cover: up to 6 blocks on 8 fixed slots. Against
+  the computer you place the LEFT cover and the computer places its own.
+- The computer breaks cover on purpose when that cover stands between its cannon and one of your
+  characters.
+- The characters' run to the cannon is planned for M3.4-C.
 
 You play the LEFT team against a computer opponent (Easy, Normal or Hard), or two people play
 each other on one computer. The design and roadmap are in [docs/M0_design.md](docs/M0_design.md).
@@ -60,8 +61,25 @@ In VS Code you can also pick the `.venv` interpreter (**Python: Select Interpret
        same size when the battle starts.
    - A team can't have the same role twice. The first pick (Slot 1) stands at the front, right
      behind the cover.
-   - Press **START BATTLE** when the team(s) are full.
-2. **Battle.** The LEFT team moves first in the first match, then the turns alternate.
+   - Press **PLACE COVER** when the team(s) are full.
+2. **Cover placement.** One team at a time sees its own side of the battlefield: its characters,
+   its cannon and its 8 cover slots, exactly where they will be in the battle.
+   - Click an **empty slot** (light, with a "+") to place a block. Click a **block** to remove it.
+   - "Blocks: 4 / 6" shows how many of the 6 blocks are used. You may confirm any cover from
+     0 to 6 blocks.
+   - A raised slot needs a block under it. A slot that can't take a block right now (no block
+     under it, or all 6 blocks used) is only outlined. Removing a lower block also removes the
+     block on top of it, and the status line says so.
+   - The screen starts with the default cover (the whole bottom row plus the two raised slots
+     next to the characters), so you can also just press **Confirm**.
+   - **Against the computer:** you place the LEFT cover, then **Confirm** starts the battle. The
+     computer places its RIGHT cover by itself.
+   - **Two players:** LEFT places first, then **Confirm** shows RIGHT's screen. The other team's
+     cover stays hidden until the battle starts.
+   - **Back** returns to the previous step (RIGHT's screen → LEFT's → team selection) without
+     losing the teams or the cover already placed. Cover choices are also kept when you change
+     the teams, because characters never stand on cover slots.
+3. **Battle.** The LEFT team moves first in the first match, then the turns alternate.
    - **The HUD** shows the round (e.g. "Round 7 / 30") and, for each team, how many characters
      are still standing and how many cover blocks are left (e.g. "LEFT  2/3 standing   cover 5/6").
    - **Choose who acts:** click one of your living characters, or press **1 / 2 / 3**. The chosen
@@ -77,10 +95,13 @@ In VS Code you can also pick the `.venv` interpreter (**Python: Select Interpret
 
    On the computer's turn the buttons are greyed out. After a short pause it chooses a character
    and an action by itself. The combat log shows its choice (e.g. "AI (Normal): Archer attacks
-   the LEFT Knight.") and what happened.
-3. **Result.** The result screen shows the winner, or DRAW, why the match ended and how many
+   the LEFT Knight." or "AI (Hard): Engineer attacks the cover in front of the LEFT Knight.") and
+   what happened.
+4. **Result.** The result screen shows the winner, or DRAW, why the match ended and how many
    rounds were played.
-   - Choose **Rematch** (same teams, same cover, same computer level) or **Change teams**.
+   - Choose **Rematch** (same teams, both covers, same computer level; every character and block
+     starts at full HP again) or **Change teams** (back to team selection; your cover choices are
+     kept).
      **R** is a rematch shortcut (it also restarts a match in progress).
    - **Who moves first alternates:** each rematch swaps the side that moves first (LEFT, RIGHT,
      LEFT, …). Choosing teams again starts with LEFT. When the computer moves first, it plays its
@@ -89,13 +110,14 @@ In VS Code you can also pick the `.venv` interpreter (**Python: Select Interpret
 ## Controls
 | Input | Action |
 |---|---|
-| Mouse click | Team selection, choose a character, ATTACK / DEFEND / SPECIAL, Rematch / Change teams |
+| Mouse click | Team selection, cover slots, Back / Confirm, choose a character, ATTACK / DEFEND / SPECIAL, Rematch / Change teams |
 | 1 / 2 / 3 | Choose your character in slot 1, 2 or 3 |
 | Up / Down | Raise / lower the cannon's angle (5°–80°) |
 | Left / Right | Decrease / increase power (10–100) |
 | Shift + arrow | Change by 5 instead of 1 |
 | Space | ATTACK |
-| Enter | START BATTLE (selection screen) |
+| Enter | PLACE COVER (selection screen), Confirm (cover screen) |
+| Backspace | Back (cover screen) |
 | R | Rematch: restart with the same teams and cover (the side that moves first swaps) |
 | Esc | Quit |
 
@@ -108,14 +130,17 @@ to switch the keyboard to English first.
 ## Rules
 - **Battlefield:** each side, from the edge of the screen inward, has its characters (slots 1–3),
   then its cover slots, then its cannon. The two sides are mirror images.
-- **Cover:** each team may place up to **6 blocks** (100 HP each) on its **8 fixed cover slots**,
-  in 4 columns × 2 rows.
-  - A raised block must stand on a block.
-  - A slot holds one block.
+- **Cover:** each team places up to **6 blocks** (100 HP each) on its **8 fixed cover slots**,
+  in 4 columns × 2 rows, before the battle (see *Cover placement* above).
+  - A raised block must stand on a block. A slot holds one block. There is no free placement:
+    only the 8 slots.
   - Blocks never overlap characters, cannons or the screen's text and buttons.
   - Unused blocks give no protection. A team may even place none.
-  - For now (M3.4-A) both teams use the default cover: the whole bottom row plus the two raised
-    blocks nearest the characters.
+  - One function, `castle.layout_problem()`, decides whether a layout is legal. The placement
+    screen, the computer and the battle all use it, so an illegal layout can never reach a battle.
+  - **Why cover exists:** with nothing in the way, the first accurate shots would decide the match.
+    Cover makes a team choose between a hard shot over or around the blocks and breaking the
+    blocks first, and it gives Defend (Cover Guard) and the Engineer's Repair something to protect.
 - **Shots:** a shot flies in an arc under gravity. It explodes on the **first** enemy block or
   enemy character it touches, or on the ground.
   - The whole path of every step is checked, so a fast shot can't jump through a thin target.
@@ -155,7 +180,9 @@ to switch the keyboard to English first.
   "ready" or "wait N" under its feet.
 - **EXP:** +10 for a shot that damages something, +20 more for each enemy it defeats, and +5 for
   Rally or Repair. Level-ups (30 × level EXP) raise HP, ATK and DEF, up to Level 5.
-- **Winning:** defeat every enemy character. Destroying blocks never wins by itself.
+- **Winning:** defeat every enemy character. Destroying blocks never wins by itself. This is the
+  course's core requirement (character elimination), and it keeps the cover what it is meant to
+  be: protection, not a target worth winning for.
 - **Round limit (our safety rule, not a course requirement):** a match that reaches the end of
   round 30 without an elimination is a **draw** (a timeout).
   - A round is complete once both teams have acted, whichever side started.
@@ -171,12 +198,25 @@ to switch the keyboard to English first.
 - It plays by the same rules as you: it can only act through the same `Battle.perform_action()`
   that the buttons use, so it can't use a special that is recharging, act with a defeated
   character, or act out of turn.
+- **Its cover:** before the battle it builds a two-block tower on the slots next to its
+  characters, where enemy shots come down on its front character, then places its other 4 blocks
+  one at a time on random slots where a block is allowed. The same 6-block budget and the same
+  `layout_problem()` check as yours. It never looks at your cover. (It can build six different
+  layouts; with a fixed seed it always builds the same one.)
 - **Aiming:** it "imagines" shots at many angles and powers on a copy of the battle (the real
-  physics and damage rules run on the copy) and sees what each would hit. It ranks the options by
-  how much damage each does to the enemy characters, then adds a random aiming error. Repair is
-  chosen when restoring cover is worth more.
-- **Not yet (M3.4-B):** it does not yet plan around cover or try to break the blocks protecting
-  a character.
+  physics and damage rules run on the copy) and sees what each would do. Each aim scores:
+  - **damage** to your characters (and a bonus for defeating one), or
+  - **opening a shot:** for every aim that ends on a block, it traces the rest of the path
+    (`Battle.path_contacts`). If one of your living characters stands behind those blocks, the
+    blocks are *in the way*. A shot that damages blocks in the way scores the share of their HP it
+    removes × the value of hitting that character, counted at half (the payoff is a turn later,
+    and you may Repair). A block that is in nobody's way is worth nothing, so it never wastes
+    turns on harmless cover.
+  - It knows its own aiming error, so it rates each aim by the average of the aims around it that
+    it might really fire. A narrow gap over the cover is worth less than a wide one, which is why
+    a protected character makes breaking the cover attractive.
+  - It picks one of its best aims, then adds a random aiming error. Repair is chosen when
+    restoring cover is worth more.
 - **Defending:** when one of its characters is below half HP, it is more likely to Defend (or to
   use the Knight's Rally). It never defends two turns in a row.
 - **Difficulty** changes only how carefully it chooses and how accurately it aims:
@@ -184,7 +224,7 @@ to switch the keyboard to English first.
 | | Easy | Normal | Hard |
 |---|---|---|---|
 | Aiming error (angle / power, up to ±) | 6° / 8 | 3° / 4 | 1° / 2 |
-| Chooses among the best … options | 5 | 3 | 1 (always the best) |
+| Chooses among the best … targets (a character, or the cover in front of one) | 5 | 3 | 1 (always the best) |
 | Considers specials on a turn | 25 % | 50 % | 100 % |
 | Defend chance (all at least half HP / one below half HP) | 10 % / 40 % | 5 % / 50 % | 0 % / 60 % |
 
@@ -202,17 +242,18 @@ python -m unittest discover tests
 ## Project layout
 | File | Purpose |
 |---|---|
-| `main.py` | Pygame window, screens (team selection, battle, result), buttons, mouse and keyboard input, the computer's turn, drawing and the main loop (the only file that uses Pygame) |
-| `ai.py` | `AIController`: the computer opponent (team choice, Defend / Attack / Special choice, aiming) and its difficulty table |
-| `battle.py` | Cannons, projectile physics, collision along the flight path, explosions and cover, turns, the round limit and victory; `Team` and team combat (Attack / Defend / Special) |
-| `castle.py` | `Block`, the 8 cover slots and layout rules (`layout_problem`), and `Castle` (one team's cover): damage and repair |
+| `main.py` | Pygame window, screens (team selection, cover placement, battle, result), buttons, mouse and keyboard input, the computer's turn, drawing and the main loop |
+| `drawing.py` | The screens' shared look: colours, text, character figures and buttons (moved out of `main.py` in M3.4-B; with `main.py`, the only files that use Pygame) |
+| `ai.py` | `AIController`: the computer opponent (team and cover choice, Defend / Attack / Special choice, cover-aware aiming) and its difficulty table |
+| `battle.py` | Cannons, projectile physics, collision along the flight path, explosions and cover, turns, the round limit and victory; `Team` and team combat (Attack / Defend / Special); `path_contacts` for the computer's planning |
+| `castle.py` | `Block`, the 8 cover slots, the layout rules (`layout_problem`) and the placement clicks (`place_block`, `remove_block`), and `Castle` (one team's cover): damage and repair |
 | `characters.py` | `Character` base class with `Knight`, `Archer`, `Engineer`: HP/ATK/DEF, damage, defend, cooldowns, EXP, levels and each role's special ability |
 | `tests/` | `unittest` tests for `castle.py`, `battle.py` (physics and collision), team combat and cover (`test_combat.py`), `characters.py`, `ai.py` and `main.py` |
 | `docs/M0_design.md` | Design: rules, architecture, roadmap (the latest decisions at the top) |
 | `docs/M3.1_balance_analysis.md` | M3.1 analysis of Defend and Repair (recommendations only, nothing changed) |
 | `docs/M3.2_balance_report.md` | M3.2 balance experiment under the old castle rules (historical; its script is in commit `86b90fa`) |
 | `docs/M3.2_benchmark_results.md`, `docs/M3.2_benchmark_results_easy.md` | That benchmark's generated result tables (historical) |
-| `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules (updated for M3.4-A) |
+| `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules (updated for M3.4-B) |
 | `docs/Rebound_reference_review.md` | Review of a reference project (ideas only) |
 
 ## References

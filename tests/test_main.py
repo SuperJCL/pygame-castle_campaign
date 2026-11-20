@@ -15,8 +15,9 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 try:
     import pygame
     import main
+    from ai import AIController
     from battle import ROUND_LIMIT
-    from castle import slot_position
+    from castle import DEFAULT_LAYOUT, layout_problem, slot_position
     from characters import Archer, Engineer, Knight
 except ImportError:          # Pygame is not installed: the tests below are skipped
     pygame = None
@@ -71,14 +72,35 @@ class MainTestCase(unittest.TestCase):
 
     def start(self, left, right):
         """Two-player (hot seat) match: choose "Two players", pick both teams by clicking,
-        and press START."""
+        press PLACE COVER, and confirm both teams' cover (the default layout, unchanged)."""
+        self.pick_teams(left, right)
+        self.click(self.game.start_button.rect)
+        self.assertEqual((self.game.state, self.game.placing), ("cover", "left"))
+        self.click(self.game.confirm_button.rect)
+        self.assertEqual((self.game.state, self.game.placing), ("cover", "right"))
+        self.click(self.game.confirm_button.rect)
+        self.assertEqual(self.game.state, "battle")
+
+    def pick_teams(self, left, right):
+        """Two players: choose the mode and team size, and click both teams' characters."""
         self.click(self.game.mode_buttons["pvp"].rect)
         self.click(self.game.size_buttons[len(left) - 1].rect)
         for side, roles in (("left", left), ("right", right)):
             for role in roles:
                 self.click(self.game.card_rects[(side, role)])
+
+    def start_vs_ai(self, left):
+        """Player vs AI: pick the LEFT team, press PLACE COVER and confirm the LEFT cover."""
+        self.click(self.game.size_buttons[len(left) - 1].rect)
+        for role in left:
+            self.click(self.game.card_rects[("left", role)])
         self.click(self.game.start_button.rect)
+        self.assertEqual((self.game.state, self.game.placing), ("cover", "left"))
+        self.click(self.game.confirm_button.rect)
         self.assertEqual(self.game.state, "battle")
+
+    def click_slot(self, side, slot):
+        self.click(main.slot_rect(side, slot))
 
     def character_rect(self, side, index):
         return self.game.battle.teams[side].character_rect(index)
@@ -208,6 +230,233 @@ class SelectionScreenTest(MainTestCase):
         with self.assertRaises(TypeError):
             main.Battle()                                  # every battle needs two teams
         self.game.draw()                                   # the selection screen states the rule
+
+
+class CoverPlacementScreenTest(MainTestCase):
+    """M3.4-B: the cover placement screen, after team selection and before the battle."""
+
+    def setUp(self):
+        super().setUp()
+        self.pick_teams([Knight, Archer], [Engineer, Knight])
+        self.click(self.game.start_button.rect)                 # PLACE COVER
+
+    def layout(self, side="left"):
+        return self.game.setup.layouts[side]
+
+    def test_the_left_team_places_its_cover_first_starting_from_the_default(self):
+        self.assertEqual((self.game.state, self.game.placing), ("cover", "left"))
+        self.assertEqual(self.layout(), DEFAULT_LAYOUT)
+        self.assertEqual(self.game.cover_count_text(), "Blocks: 6 / 6")
+        self.assertIn("LEFT", self.game.cover_title())
+        self.game.draw()                                         # the screen draws without errors
+
+    def test_clicking_an_occupied_slot_removes_its_block(self):
+        self.click_slot("left", 3)
+        self.assertEqual(self.layout(), (0, 1, 2, 4, 5))
+        self.assertEqual(self.game.cover_count_text(), "Blocks: 5 / 6")
+        self.assertIn("removed", self.game.message)
+
+    def test_clicking_an_empty_slot_places_a_block(self):
+        self.click_slot("left", 3)
+        self.click_slot("left", 6)                               # on top of slot 2
+        self.assertEqual(self.layout(), (0, 1, 2, 4, 5, 6))
+        self.assertIn("placed", self.game.message)
+
+    def test_a_raised_block_needs_a_block_under_it_and_the_screen_says_so(self):
+        self.click_slot("left", 3)
+        self.click_slot("left", 7)                               # slot 3 under it is empty now
+        self.assertEqual(self.layout(), (0, 1, 2, 4, 5))
+        self.assertIn("needs a block under it", self.game.message)
+
+    def test_removing_a_supporting_block_also_removes_the_block_on_top(self):
+        self.click_slot("left", 0)                               # slot 4 stood on slot 0
+        self.assertEqual(self.layout(), (1, 2, 3, 5))
+        self.assertIn("block on top", self.game.message)
+
+    def test_a_seventh_block_is_refused(self):
+        self.click_slot("left", 6)
+        self.assertEqual(self.layout(), DEFAULT_LAYOUT)
+        self.assertIn("at most 6", self.game.message)
+
+    def test_a_cover_of_zero_blocks_can_be_confirmed(self):
+        for slot in (0, 1, 2, 3):                                # the raised blocks go with them
+            self.click_slot("left", slot)
+        self.assertEqual(self.layout(), ())
+        self.assertEqual(self.game.cover_count_text(), "Blocks: 0 / 6")
+        self.click(self.game.confirm_button.rect)
+        self.click(self.game.confirm_button.rect)                # RIGHT keeps the default
+        self.assertEqual(self.game.state, "battle")
+        self.assertEqual(self.game.battle.castles["left"].blocks, ())
+        self.assertEqual(self.game.battle.castles["right"].layout, DEFAULT_LAYOUT)
+
+    def test_the_right_team_uses_the_mirrored_slots(self):
+        for slot in range(8):
+            left, right = main.slot_rect("left", slot), main.slot_rect("right", slot)
+            self.assertEqual((right.x, right.y, right.size), (1280 - left.x - 32, left.y, left.size))
+        self.click(self.game.confirm_button.rect)
+        self.assertEqual(self.game.placing, "right")
+        self.click_slot("left", 3)                               # LEFT's slots don't react now
+        self.assertEqual(self.layout("left"), DEFAULT_LAYOUT)
+        self.click_slot("right", 3)                              # x 980: next to the RIGHT cannon
+        self.assertEqual(self.layout("right"), (0, 1, 2, 4, 5))
+        self.assertEqual(self.layout("left"), DEFAULT_LAYOUT)
+
+    def test_an_illegal_layout_never_reaches_the_battle(self):
+        self.game.setup.layouts["left"] = (5,)                   # forced from outside: floats
+        self.click(self.game.confirm_button.rect)
+        self.assertEqual((self.game.state, self.game.placing), ("cover", "left"))
+        self.assertIn("needs a block under it", self.game.message)
+        self.assertIsNone(self.game.battle)
+
+    def test_empty_and_occupied_slots_look_different(self):
+        self.click_slot("left", 3)                               # slot 3 empty; slot 7 can't take a block
+        self.game.draw()
+
+        def colour(slot):                                        # inside the outline, beside the "+"
+            rect = main.slot_rect("left", slot)
+            return tuple(self.screen.get_at((rect.left + 5, rect.top + 5)))[:3]
+        occupied, empty, unsupported = colour(0), colour(3), colour(7)
+        self.assertEqual(occupied, main.block_color("left", 100, 100))
+        self.assertEqual(empty, main.OPEN_SLOT_COLOR)
+        self.assertEqual(len({occupied, empty, unsupported}), 3)
+
+    def test_slots_stay_clear_of_characters_cannons_and_text(self):
+        self.click(self.game.confirm_button.rect)                # check the RIGHT screen too
+        half_width = max(16, self.game.tiny_font.size("Engineer")[0] // 2 + 1)   # the widest name
+        for side in ("left", "right"):
+            text_bottom = self.game.cover_text_bottom()
+            cannon = main.Cannon(side)
+            for slot in range(8):
+                rect = main.slot_rect(side, slot)
+                self.assertGreater(rect.top, text_bottom + 40)
+                self.assertLessEqual(rect.bottom, main.GROUND_Y)
+                self.assertFalse(rect.colliderect((cannon.x - 30, cannon.y - 30, 60, 60)))
+                for index in range(3):
+                    x = main.SLOT_X[side][index]
+                    figure = pygame.Rect(x - half_width, main.GROUND_Y - 44 - 40, 2 * half_width, 84)
+                    self.assertFalse(rect.colliderect(figure), (side, slot, index))
+
+    def test_the_instructions_explain_placing_removing_and_support(self):
+        text = " ".join(self.game.cover_help_lines())
+        for words in ("empty slot", "remove", "under it", "6 blocks", "only defeating every enemy"):
+            self.assertIn(words, text)
+        for line in self.game.cover_help_lines():
+            self.assertLess(self.game.small_font.size(line)[0], main.WINDOW_WIDTH - 40, line)
+
+    def test_enter_confirms_and_backspace_goes_back(self):
+        self.game.handle_key(pygame.K_RETURN, 0)
+        self.assertEqual(self.game.placing, "right")
+        self.game.handle_key(pygame.K_BACKSPACE, 0)
+        self.assertEqual(self.game.placing, "left")
+        self.game.handle_key(pygame.K_BACKSPACE, 0)
+        self.assertEqual(self.game.state, "select")
+
+
+class SetupFlowTest(MainTestCase):
+    """M3.4-B: selection -> LEFT cover -> (RIGHT cover in two-player mode) -> battle."""
+
+    def test_against_the_computer_only_the_left_cover_is_placed_by_hand(self):
+        self.game = main.Game(self.screen, ai_seed=3)
+        self.click(self.game.card_rects[("left", Knight)])
+        self.click(self.game.start_button.rect)
+        self.click_slot("left", 3)
+        self.click(self.game.confirm_button.rect)
+        self.assertEqual(self.game.state, "battle")
+        battle = self.game.battle
+        twin = AIController("right", "normal", seed=3)           # the same seed chooses the same
+        twin.pick_team(1)
+        self.assertEqual(battle.layouts, {"left": (0, 1, 2, 4, 5), "right": twin.choose_layout()})
+        self.assertIsNone(layout_problem(battle.layouts["right"]))
+        self.assertLessEqual(len(battle.castles["right"].blocks), 6)
+        self.assertIn("AI (Normal) placed 6 cover blocks.", self.game.log)
+
+    def test_two_players_each_place_their_own_cover(self):
+        self.pick_teams([Knight], [Archer])
+        self.click(self.game.start_button.rect)
+        self.click_slot("left", 3)
+        self.click(self.game.confirm_button.rect)
+        self.assertEqual(self.game.placing, "right")
+        self.assertIn("RIGHT", self.game.cover_title())
+        self.click_slot("right", 0)
+        self.click(self.game.confirm_button.rect)
+        self.assertEqual(self.game.battle.layouts, {"left": (0, 1, 2, 4, 5), "right": (1, 2, 3, 5)})
+
+    def test_back_from_the_right_cover_keeps_both_covers(self):
+        self.pick_teams([Knight], [Archer])
+        self.click(self.game.start_button.rect)
+        self.click_slot("left", 3)
+        self.click(self.game.confirm_button.rect)
+        self.click_slot("right", 0)
+        self.click(self.game.back_button.rect)
+        self.assertEqual((self.game.state, self.game.placing), ("cover", "left"))
+        self.assertEqual(self.game.setup.layouts, {"left": (0, 1, 2, 4, 5), "right": (1, 2, 3, 5)})
+        self.click(self.game.confirm_button.rect)
+        self.click(self.game.confirm_button.rect)
+        self.assertEqual(self.game.battle.layouts, {"left": (0, 1, 2, 4, 5), "right": (1, 2, 3, 5)})
+
+    def test_back_from_the_left_cover_returns_to_selection_with_everything_kept(self):
+        self.pick_teams([Knight, Archer], [Engineer, Knight])
+        self.click(self.game.start_button.rect)
+        self.click_slot("left", 2)
+        self.click(self.game.back_button.rect)
+        self.assertEqual(self.game.state, "select")
+        self.assertEqual(self.game.selection.picks, {"left": [Knight, Archer], "right": [Engineer, Knight]})
+        self.assertFalse(self.game.selection.vs_ai)
+        self.click(self.game.start_button.rect)
+        self.assertEqual(self.game.setup.layouts["left"], (0, 1, 3, 4, 5))
+
+    def test_changing_the_teams_keeps_the_cover_choices(self):
+        # Cover slots never depend on the team size or roles, so the choices stay valid.
+        self.pick_teams([Knight, Archer], [Engineer, Knight])
+        self.click(self.game.start_button.rect)
+        self.click_slot("left", 0)
+        self.click(self.game.confirm_button.rect)
+        self.click_slot("right", 3)
+        self.click(self.game.back_button.rect)
+        self.click(self.game.back_button.rect)
+        self.click(self.game.size_buttons[0].rect)               # 1 v 1 now: the first picks stay
+        self.click(self.game.card_rects[("left", Knight)])       # swap the LEFT role
+        self.click(self.game.card_rects[("left", Archer)])
+        self.click(self.game.start_button.rect)
+        self.click(self.game.confirm_button.rect)
+        self.click(self.game.confirm_button.rect)
+        battle = self.game.battle
+        self.assertEqual([type(c) for c in battle.teams["left"].characters], [Archer])
+        self.assertEqual(battle.layouts, {"left": (1, 2, 3, 5), "right": (0, 1, 2, 4, 5)})
+
+    def test_the_two_teams_never_share_one_layout(self):
+        self.pick_teams([Knight], [Archer])
+        self.click(self.game.start_button.rect)
+        self.click_slot("left", 3)
+        self.assertEqual(self.game.setup.layouts["right"], DEFAULT_LAYOUT)
+        for layout in self.game.setup.layouts.values():
+            self.assertIsInstance(layout, tuple)                 # can't be changed in place
+
+    def test_a_rematch_keeps_both_covers_and_the_computer_layout(self):
+        self.game = main.Game(self.screen, ai_seed=8)
+        self.click(self.game.size_buttons[1].rect)
+        for role in (Knight, Archer):
+            self.click(self.game.card_rects[("left", role)])
+        self.click(self.game.start_button.rect)
+        self.click_slot("left", 1)
+        self.click(self.game.confirm_button.rect)
+        battle = self.game.battle
+        layouts = dict(battle.layouts)
+        for side in ("left", "right"):
+            for block in battle.castles[side].blocks:
+                block.take_damage(60)
+            for character in battle.teams[side].characters:
+                character.take_damage(30)
+                character.defend()
+        battle.castles["right"].blocks[0].take_damage(100)
+        self.game.handle_key(pygame.K_r, 0)
+        self.assertEqual(battle.layouts, layouts)
+        self.assertEqual(battle.layouts["left"], (0, 2, 3, 4))
+        for side in ("left", "right"):
+            self.assertEqual(battle.castles[side].layout, layouts[side])
+            self.assertTrue(all(block.hp == 100 for block in battle.castles[side].blocks))
+            for character in battle.teams[side].characters:
+                self.assertEqual((character.hp, character.is_defending), (character.max_hp, False))
 
 
 class ActorSelectionTest(MainTestCase):
@@ -581,7 +830,10 @@ class RematchAndFirstMoverTest(MainTestCase):
         self.click(self.game.rematch_button.rect)              # RIGHT starts the rematch
         end_match_now(self)
         self.click(self.game.change_teams_button.rect)
-        self.click(self.game.start_button.rect)                # same picks, a new series
+        self.click(self.game.start_button.rect)                # same picks, a new series ...
+        self.assertEqual(self.game.state, "cover")             # ... through the cover screens again
+        self.click(self.game.confirm_button.rect)
+        self.click(self.game.confirm_button.rect)
         self.assertEqual(self.game.battle.active_side, "left")
 
     def test_rematch_resets_the_match_and_keeps_teams_cover_and_difficulty(self):
@@ -590,6 +842,7 @@ class RematchAndFirstMoverTest(MainTestCase):
         for role in (Knight, Archer):
             self.click(self.game.card_rects[("left", role)])
         self.click(self.game.start_button.rect)
+        self.click(self.game.confirm_button.rect)              # the LEFT cover: the default layout
         ai, battle = self.game.ai, self.game.battle
         layouts = dict(battle.layouts)
         right_roles = [type(c) for c in battle.teams["right"].characters]
@@ -597,7 +850,7 @@ class RematchAndFirstMoverTest(MainTestCase):
         aim(self.game, *COVER_WALL)
         self.click(self.game.action_buttons["special"].rect)   # Power Shot: block damage, EXP, cooldown
         finish_shot(self.game)
-        self.assertEqual(battle.castles["right"].total_hp(), 600 - 4 * 75)
+        self.assertLess(battle.castles["right"].total_hp(), 600)   # the computer's own cover was hit
         self.game.handle_key(pygame.K_r, 0)                    # R restarts at any time
         self.assertIs(self.game.ai, ai)
         self.assertEqual(ai.difficulty, "hard")
@@ -615,8 +868,7 @@ class RematchAndFirstMoverTest(MainTestCase):
         self.assertEqual(self.game.explosions, [])
 
     def test_the_computer_moves_first_by_itself_when_right_starts(self):
-        self.click(self.game.card_rects[("left", Knight)])     # Player vs AI, Normal, 1 v 1
-        self.click(self.game.start_button.rect)
+        self.start_vs_ai([Knight])                             # Player vs AI, Normal, 1 v 1
         end_match_now(self)
         self.click(self.game.rematch_button.rect)
         self.assertEqual(self.game.battle.active_side, "right")
@@ -774,6 +1026,8 @@ class PlayerVsAISelectionTest(MainTestCase):
                 self.click(self.game.card_rects[("left", left[-1])])
                 self.assertTrue(self.game.start_button.enabled)
                 self.click(self.game.start_button.rect)
+                self.assertEqual((self.game.state, self.game.placing), ("cover", "left"))
+                self.click(self.game.confirm_button.rect)      # no RIGHT cover screen: the AI places it
                 self.assertEqual(self.game.state, "battle")
                 teams = self.game.battle.teams
                 self.assertEqual([type(c) for c in teams["left"].characters], left)
@@ -787,8 +1041,7 @@ class PlayerVsAISelectionTest(MainTestCase):
         self.assertEqual(self.game.selection.difficulty, "hard")
         self.assertTrue(self.game.difficulty_buttons["hard"].chosen)
         self.assertFalse(self.game.difficulty_buttons["normal"].chosen)
-        self.click(self.game.card_rects[("left", Knight)])
-        self.click(self.game.start_button.rect)
+        self.start_vs_ai([Knight])
         self.assertEqual(self.game.ai.difficulty, "hard")
 
     def test_two_players_mode_has_no_computer(self):
@@ -804,8 +1057,7 @@ class PlayerVsAIBattleTest(MainTestCase):
 
     def setUp(self):
         super().setUp()
-        self.click(self.game.card_rects[("left", Knight)])       # 1 v 1, Normal
-        self.click(self.game.start_button.rect)
+        self.start_vs_ai([Knight])                               # 1 v 1, Normal
 
     def run_frames(self, count):
         for _ in range(count):

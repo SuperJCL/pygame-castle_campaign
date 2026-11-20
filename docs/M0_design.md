@@ -1,12 +1,13 @@
 # Castle Siege — M0 Requirements and Architecture
 
-Status: **Revision 3 (M2.3), updated for M3.4-A.** This is the living design document. The game is
-implemented up to M3.4-A (Player vs AI, two-player hot seat, the M3.2 balance numbers, the M3.3
-match flow, and the M3.4-A redesign: elimination-only victory and deployable cover). Revision 3's
-final decisions and the M3.2 / M3.3 / M3.4-A changes, just below, override anything older in this
-document; **where they disagree, the M3.4-A block wins.** The AI that was built differs from the
-plan in §6.3; see §14, "M3.1 notes". The course-compliance checklist is
-`docs/M3.3_course_compliance.md` (updated for M3.4-A).
+Status: **Revision 3 (M2.3), updated for M3.4-B.** This is the living design document. The game is
+implemented up to M3.4-B (Player vs AI, two-player hot seat, the M3.2 balance numbers, the M3.3
+match flow, the M3.4-A redesign: elimination-only victory and deployable cover, and M3.4-B: the
+cover placement screen and a cover-aware computer opponent). Revision 3's final decisions and the
+M3.2 / M3.3 / M3.4 changes, just below, override anything older in this document; **where they
+disagree, the M3.4-B block wins, then M3.4-A.** The AI that was built differs from the plan in
+§6.3; see §14, "M3.1 notes" and "M3.4-B notes". The course-compliance checklist is
+`docs/M3.3_course_compliance.md` (updated for M3.4-B).
 
 ### Revision 3 — final decisions (made by the PM and the user in M2.3)
 - **Alternating turns are the final design. Simultaneous turns are cancelled.** The left team
@@ -64,7 +65,8 @@ screen and the AI redesign are M3.4-B, the run-to-cannon animation M3.4-C.
   between its characters and its cannon (4 columns × 2 rows; a raised block needs a block under
   it). `castle.layout_problem()` checks a layout; `Battle(roster, layouts=...)` builds each team's
   `Castle` from its layout, and a rematch rebuilds the same layout at full HP. Until the
-  placement screen exists, both teams use `DEFAULT_LAYOUT` (slots 0–5).
+  placement screen exists, both teams use `DEFAULT_LAYOUT` (slots 0–5). *(M3.4-B: each team now
+  places its own cover; `DEFAULT_LAYOUT` is where the placement screen starts.)*
 - **One shared cannon per team**, on the ground in front of the cover (pivots (340, 544) and
   (940, 544)). The acting character's stats set the damage, as before.
 - **Collision:** each physics step checks the whole segment the shot moved along
@@ -82,6 +84,44 @@ screen and the AI redesign are M3.4-B, the run-to-cannon animation M3.4-C.
   round-limit tie-breakers, and the castle-rules benchmark script (the M3.2 results remain
   reproducible at commit `86b90fa`).
 - Details, coordinates and the reasons are in §14, "M3.4-A notes". Human play-testing is pending.
+
+### M3.4-B — cover placement screen and cover-aware AI
+- **Setup flow:** Player vs AI: select → LEFT cover → battle (the computer places RIGHT's cover).
+  Two players: select → LEFT cover → RIGHT cover → battle. **Back** goes one step back (RIGHT's
+  screen → LEFT's → team selection) and keeps the teams and both layouts. Rematch keeps the teams,
+  both layouts, the computer and its level, and alternates the first mover (M3.3); every block
+  starts at full HP again. The computer's layout is chosen once per new series, never on a rematch.
+- **Placement screen** (`Game` state `"cover"`, `Game.placing`): one team's side of the field,
+  drawn exactly as in battle: its characters, cannon and 8 slots. A click on an empty slot places a
+  block (`castle.place_block`), a click on a block removes it (`castle.remove_block`); removing a
+  lower block also removes the block on top, and the status line says so. "Blocks: n / 6", a short
+  explanation, a legend (block / empty slot / no block allowed now), **Back** and **Confirm**.
+  Enter = Confirm, Backspace = Back. 0–6 blocks may be confirmed. The other team's cover is hidden
+  while a team places. The screen starts from `DEFAULT_LAYOUT`.
+- **One rule check:** `castle.layout_problem()` is the only place that decides legality.
+  `place_block` asks it; `remove_block` only removes blocks it would call floating
+  (`castle.floating_blocks`, which `layout_problem` uses too); the screen shows a slot as
+  placeable by asking `place_block`; Confirm asks `layout_problem` again; `Castle` refuses an
+  illegal layout. Layouts are tuples, so the two teams can never share one mutable list.
+- **The computer's cover** (`AIController.choose_layout`): a two-block tower next to its characters
+  (slots 0 and 4), then 4 more blocks, one at a time, on random slots that `place_block` allows.
+  Always the full 6-block budget, never more; six possible layouts; repeatable with a seed; it
+  never looks at the player's cover.
+- **Cover-aware aiming** (`ai.find_routes`, `cover_value`, `shot_value`, `rank_targets`): each
+  scanned aim scores its character damage plus COVER_WEIGHT (0.5) × how far it opens a shot at a
+  living enemy. A *route* is a scanned aim that ends on enemy blocks with a living enemy behind
+  them on the same path (`Battle.path_contacts`, a read-only trace that uses the real flight and
+  collision code). A shot that removes a share of the HP of the blocks in a route's way earns that
+  share × the value of a direct hit on the character behind. Blocks in nobody's way earn nothing.
+  Each aim is then rated by the average score of the aims within the AI's own power error, so
+  narrow gaps over cover count for less and breaking cover becomes the better plan when a
+  character is protected. Plans carry a goal: "damage", "cover", "defend" or "repair".
+- **Unchanged:** physics, collision, the cover rule, HP, skills, cooldowns, Defend, Cover Guard 50 %,
+  Repair 150, Power Shot, elimination-only victory and the round-30 timeout draw. No new combat
+  mechanics.
+- **Code layout:** `drawing.py` now holds the shared look (colours, text, figures, buttons), moved
+  out of `main.py` unchanged.
+- Details are in §14, "M3.4-B notes". Human play-testing is pending.
 
 Revision 2's original header: *draft for project-manager review; M0 design only.*
 
@@ -202,6 +242,9 @@ M2.3:  "select" ──► "battle" ──► "result" ──► Rematch ──�
         both rosters)
        The "select" screen also starts the classic M1 cannon duel.
 M3:    the same, plus a choice of mode (hot seat / vs AI) and AI difficulty on "select".
+M3.4-B: "select" ──► "cover" (LEFT) ──► "cover" (RIGHT, two players only) ──► "battle"
+        Back:  RIGHT's "cover" ──► LEFT's "cover" ──► "select"   (nothing chosen is lost)
+        The M1 duel was removed in M3.4-A.
 ```
 
 ### 2.2 Round flow — simultaneous mode (CANCELLED in M2.3; kept only as a record, see §2.3)
@@ -534,7 +577,8 @@ What still isn't known (§13, Q1):
 |---|---|---|---|
 | `castle.py` | M1 | `Block`, `Castle`, castle geometry constants (`GROUND_Y`, `TEMPLATE`, …) | no |
 | `battle.py` | M1, grows in M2 | M1: `Cannon`, `Projectile`, `Battle` (alternating shots). M2: adds `ActionPlan`, `Team`, the phases of §2.2 and the `TURN_MODE` switch | no |
-| `main.py` | M1, grows each milestone | Pygame window, screens, input, all drawing, sound | **yes (only this one)** |
+| `main.py` | M1, grows each milestone | Pygame window, screens, input, all drawing, sound | **yes** |
+| `drawing.py` | M3.4-B | Colours, text, character figures, `Button` (moved out of `main.py`) | **yes** (only these two) |
 | `characters.py` | M2 | `calculate_damage`, `Character`, `Knight`, `Archer`, `Engineer`, `ARCHETYPES` | no |
 | `ai.py` | M3.1 | `DIFFICULTY_SETTINGS`, `Plan`, `AIController`, `imagine` (planned: `DIFFICULTY`, `aim_power`) | no |
 
@@ -759,6 +803,8 @@ of the PM's list of important requirements.
 | Alternating turns (simultaneous resolution cancelled in M2.3) | `Battle._finish_turn`, `_start_round`, `_start_turn` | M2.2 | test_combat (turn order, cooldowns once per round, Defend covers exactly one enemy turn) |
 | Elimination victory (the only victory since M3.4-A); timeout Draw | `Team.has_lost`, `Battle.check_winner`, `ROUND_LIMIT` | M2, M3.3, M3.4-A | test_combat VictoryTest (destroying every block does not win), RoundLimitTest (both sides first, a timeout is a draw even when one team is far ahead, a last-turn elimination beats the timeout) |
 | Deployable cover, collision along the path, cover rule | `castle.layout_problem`, `slot_position`, `Castle(side, layout)`, `Battle(layouts=...)`, `battle.segment_entry`, `Team.is_covered`, `Battle._end_shot` | M3.4-A | test_castle LayoutTest; test_battle SegmentEntryTest, ShotTest (mirror images); test_combat CoverTest (intact / destroyed / same-explosion cover, hits from above, every legal layout leaves every character reachable) |
+| Cover placement screen and setup flow | `castle.place_block`, `remove_block`; `main.CoverSetup`, `Game.begin_cover`, `click_cover`, `confirm_cover`, `back_from_cover`, `draw_cover_screen` | M3.4-B | test_castle PlacementTest (every click on every legal layout stays legal); test_main CoverPlacementScreenTest, SetupFlowTest (PvAI, PvP, Back, team changes, rematch) |
+| AI cover placement and cover-aware aiming | `AIController.choose_layout`; `Battle.path_contacts`; `ai.find_routes`, `cover_value`, `shot_value`, `rank_targets`, `expected_score` | M3.4-B | test_ai LayoutChoiceTest, CoverAwarenessTest, DecisionTimeTest; test_battle PathContactsTest |
 | Alternating first mover on rematch | `Battle(first_side=...)`, `Battle.reset(first_side=...)`, `Game.rematch` | M3.3 | test_combat FirstMoverTest (rounds, cooldowns, Defend / Rally with RIGHT first); test_main RematchAndFirstMoverTest (alternation, the AI moving first, PvP) |
 | Castle Guard indicator, result screen | `Game.draw_castle_guard`, `guard_badge_rect`, `Game.result_reason`, `result_rounds` | M3.3 | test_main CastleGuardIndicatorTest, ResultReasonTest |
 | Engineer Repair (capped) | `Castle.repair`, `Block.restore`, `Engineer.REPAIR_POOL` (150 since M3.2) | M2, M3.2 | test_castle (pool examples of §3.4, no revival, no overheal); test_combat and test_main (150 through the real battle and buttons) |
@@ -786,7 +832,7 @@ of the PM's list of important requirements.
 | **C5** | "Defend reduces damage by 50 %" | **Interpretation.** Applied after DEF, minimum 1, to the defending character. *Since M3.2,* the team's blocks also take half damage while it defends (Castle Guard, called Cover Guard since M3.4, our addition). | — | Moving the halving before DEF is a one-line change; `CASTLE_GUARD_PERCENT = 0` turns Cover Guard off. |
 | **C6** | Characters "attack" | **Interpretation.** Characters attack *through* their team's cannon; the actor's stats set the damage. Since M3.4-A the cannon stands on the ground in front of the team's cover; in M3.4-C the acting character will run to it and back (animation only). | One launch point per side (PM request) keeps aiming and the AI simple. | Fire from the actor's slot instead (the Rev 1 design). Needs re-tuning. |
 | **C7** | Round limit | **Addition (built in M3.3; changed in M3.4-A).** The course doesn't mention one. A match that reaches the end of round 30 without an elimination is a Draw (a timeout); HP and cover never decide it. | It guarantees that every match ends, including AI-vs-AI test matches. | Raise `ROUND_LIMIT`. Removing it isn't recommended. |
-| **C8** | Battlefield structures | **Addition (M3.4-A).** Each team places up to 6 cover blocks on 8 fixed slots. Blocks stop shots and shield characters from the blast; they never decide the winner. | Gives the artillery game a defensive choice while characters stay the only target that wins. | An empty layout (no blocks) plays as an open field. |
+| **C8** | Battlefield structures | **Addition (M3.4-A; placement screen M3.4-B).** Each team places up to 6 cover blocks on 8 fixed slots before the battle (the computer places its own with the same budget and rules). Blocks stop shots and shield characters from the blast; they never decide the winner. | Gives the artillery game a defensive choice while characters stay the only target that wins. | An empty layout (no blocks) plays as an open field. |
 
 ### 10.2 Design questions now decided (the PM may still override)
 - **A1 Fewer than 3 characters:** allowed (1–3, as the course says). The AI matches the player's
@@ -926,11 +972,13 @@ open (see M3). The original plan follows.
   (§4.7); the first mover alternates on rematch (this answers the first-move advantage measured in
   M3.2 over a series of matches, not within one match); the Castle Guard indicator; the result
   screen's reason and rounds; the course-compliance checklist (`docs/M3.3_course_compliance.md`).
-- **M3.4-A (done, awaiting PM review):** elimination-only victory, timeout draw, deployable cover
+- **M3.4-A (done, PM-accepted):** elimination-only victory, timeout draw, deployable cover
   (layout model and validation, default layout), collision along the flight path, the cover rule,
   Cover Guard and Repair on blocks; the M1 duel and the castle benchmark removed.
-- **Next:** M3.4-B (placement screen, AI placement, cover-aware AI), only after PM approval; then
-  M3.4-C (run-to-cannon animation).
+- **M3.4-B (done, awaiting PM review; human play-testing pending):** the cover placement screen
+  and setup flow (PvAI and PvP, Back, rematch), the computer's cover placement, cover-aware AI
+  aiming, `drawing.py`.
+- **Next:** M3.4-C (run-to-cannon animation), only after PM approval.
 
 **Updated in M2.3.**
 - **Required:** Player vs AI.
@@ -1545,5 +1593,125 @@ variants; reproducible at `86b90fa`).
 
 **Tests:** the aiming values in the tests come from an independent simulation (its own physics and
 a fine-sampling collision check), not from `battle.py`.
+
+Human gameplay acceptance is pending.
+
+### M3.4-B notes (cover placement screen and cover-aware AI)
+**Brief (PM, M3.4-B):** a cover placement screen between team selection and battle (Player vs AI:
+LEFT only, the AI places RIGHT; two players: both teams, with Back), rematches that keep both
+covers, an AI that tells character damage, cover that opens a shot, cover that weakens a blocked
+route and harmless shots apart, measured decision times and match statistics, and scripted
+gameplay screenshots. No animation (M3.4-C), no new combat mechanics.
+
+**Placement rules live in `castle.py`:** `place_block(layout, slot)` returns the new layout or the
+unchanged layout and `layout_problem()`'s reason; `remove_block(layout, slot)` removes the block
+and then every block `floating_blocks()` reports (the raised block that stood on it), and returns
+the removed slots so the screen can say what happened. `layout_problem()` uses the same
+`floating_blocks()`, so the support rule is written once. A property test clicks every slot of
+every one of the 76 legal layouts and checks that the result is always legal, and that every legal
+layout can be built by clicks and cleared to zero blocks.
+
+**Screen decisions:**
+- The screen shows the placing team's side **at battle scale and position** (characters, cannon,
+  slots), so what you place is exactly what you get. The slots are the real 32 px squares; the
+  legend, the "+" on placeable slots and the status line make them readable at 1280 × 720.
+- A slot is drawn as placeable only if `place_block` would accept a block there, so the drawing
+  never repeats a rule.
+- It starts from `DEFAULT_LAYOUT`, so Confirm alone gives a sensible cover, with the same budget
+  the computer uses.
+- In two-player mode the other team's cover is not drawn while a team places (both are visible in
+  battle); this stops RIGHT from simply countering LEFT's layout.
+- Keys: Enter = Confirm, Backspace = Back (Esc still quits).
+- `Game.state == "cover"` and `Game.placing` ("left"/"right") describe the step; the battle is
+  updated only in "battle" and "result", so an old finished battle can't produce events while the
+  teams or the cover are being chosen again.
+
+**Setup state:** `CoverSetup.layouts` holds one tuple per side. Back keeps everything; Change teams
+keeps the picks and both layouts (cover slots don't depend on the team size or roles). In Player
+vs AI the computer's controller, team and cover are created when LEFT confirms its cover (a new
+series), and a rematch only calls `Battle.reset`, which rebuilds the same layouts at full HP, so
+the computer's cover is never regenerated on a rematch. The human's RIGHT layout from two-player
+mode is kept separately and is not overwritten by the computer's. `Game(screen, ai_seed=...)`
+makes the computer repeatable for the tests; the real game passes no seed.
+
+**AI layout policy (`AIController.choose_layout`):** first a two-block tower on slots 0 and 4,
+next to its characters, because that is where shots that clear the cover come down on the front
+character; then 4 more blocks, each on a random slot that `place_block` allows. Always 6 blocks,
+never more; 6 different layouts are possible; the same seed gives the same layout; the player's
+cover is never read.
+
+**AI cover-clearing algorithm, in plain language (`ai.py`):**
+1. Scan: imagine an Attack at angles 30°, 45° and 60° with every second power (as since M3.1).
+2. Routes: for each scanned aim that came down on an enemy block, trace the whole path
+   (`Battle.path_contacts`). If a living enemy character stands behind the blocks on that path,
+   it is a *route*; the blocks before the character are *in its way*. A route is worth one direct
+   hit on that character (`hit_value`: its HP removed / the enemy team's HP left, plus the defeat
+   bonus if it would fall).
+3. Score each aim: `progress()` (character damage, defeats, a win) + 0.5 × the best
+   *route value × share of the HP of that route's blocking blocks that the shot removes*. So:
+   (1) a shot that damages a character scores its damage; (2) a shot that destroys the last block
+   in a route's way scores half the route value; (3) a shot that only weakens such a block scores
+   the matching share; (4) a shot that damages only blocks in nobody's way, or nothing, scores 0.
+   The 0.5 says that an opened route pays off a turn later at the earliest, and the enemy may
+   Repair.
+4. Reliability: each aim is rated by the average score of the scanned aims within the AI's own
+   power error (±8 Easy, ±4 Normal, ±2 Hard; clamped like the error itself). A narrow gap over the
+   cover therefore counts for less than a wide target, and a protected character makes breaking
+   the cover the better plan. The angle error is not included (only three angles are scanned).
+5. Targets are grouped (a character, a group of characters, or "the cover in front of" a
+   character); Easy picks among the best 5, Normal 3, Hard always the best. Then the shooter
+   (and Attack or Power Shot) is chosen with the same score, Repair is compared as before, and the
+   aiming error is added. The plan's `goal` is "damage", "cover", "defend", "repair" or None.
+It is a one-turn lookahead with real Battle copies plus path traces: no game tree, no minimax,
+and no information a player can't see (the battlefield, HP and its own aiming skill).
+
+**Why `path_contacts` is in `battle.py`:** it reuses the real `Projectile` and the same
+`_touches()` collision helper that `_find_impact()` now uses, so the AI's route tracing can't
+drift from the real collision rule. A test checks that its first contact is exactly what a real
+shot hits, for 3 layouts × 33 aims, and that it changes nothing.
+
+**Code layout:** `drawing.py` now holds the colours, `draw_text`, `wrap_text`, `draw_figure`,
+`Button`, `block_color` and `hp_bar_width`, moved out of `main.py` unchanged; `main.py` imports
+them back, so `main.block_color` etc. still work. Long combat-log lines (the AI's reasons) now
+wrap inside the log panel.
+
+**Measured (seeded, scratch scripts, not committed):**
+Decision time of one `AIController.choose()` on an otherwise idle Windows PC (Python 3.11.9), over
+every decision in 9 seeded AI-vs-AI matches per level (1v1/2v2/3v3, AI-placed cover): Easy median
+96 ms (95th percentile 197, max 263), Normal 132 ms (268, 435), Hard 150 ms (211, 228); the
+slowest positions are early 3v3 rounds with 10–12 blocks standing. In a real game window the
+ordinary frame takes about 2 ms, and the one frame in which the computer decides took 118–157 ms
+(median per level, max 171 ms): a pause of about a tenth of a second once per computer turn,
+after its 2/3 s "thinking" delay. While other heavy work ran on the same PC, single decisions
+took up to 1.2 s. Whether this feels smooth is part of the pending human play-test.
+
+AI vs AI, 6 seeded matches per row, each AI placing its own cover (eliminations / 6, average
+rounds; LEFT first | RIGHT first):
+
+| | 1v1 | 2v2 | 3v3 |
+|---|---|---|---|
+| Easy | 5, 23.0 \| 6, 23.5 | 4, 25.5 \| 4, 28.7 | 3, 26.8 \| 1, 29.8 |
+| Normal | 6, 9.0 \| 6, 10.7 | 6, 15.2 \| 6, 15.7 | 5, 20.0 \| 5, 21.5 |
+| Hard | 6, 8.0 \| 6, 7.5 | 6, 11.7 \| 6, 11.2 | 6, 11.5 \| 6, 12.2 |
+
+Every match that did not end in an elimination ended in the round-30 timeout draw; no match
+needed the fallback aim. Against a team that Defends every turn (the hardest case: Defend halves
+character damage and Cover Guard halves block damage), behind each of the six layouts the AI can
+build (one of them is the default cover), 6 seeds each: Hard eliminated it in 36/36 (1v1, 13–16
+rounds on average) and 36/36 (3v3, 13–16); Normal in 29/36 (1v1, 18–19) and 31/36 (3v3, 23–26);
+Easy in 6/36 (1v1) and 0/36 (3v3).
+
+**Gameplay blocker for Easy (reported, not fixed):** Easy cannot reliably reach and eliminate
+protected characters within 30 rounds: Easy vs Easy ends in a draw in up to 5 of 6 3v3 matches,
+and Easy almost never eliminates a team that keeps defending. The cause is its aiming error
+(±6°, ±8 power) against narrow routes over the cover, made worse by Defend and Cover Guard. Normal
+and Hard do reach and eliminate protected characters. Options for the PM: accept it (Easy is meant
+to lose to a human who attacks; not yet measured with humans), lower Easy's aiming error, or raise
+`ROUND_LIMIT`. No change was made without approval.
+
+**Intentional simplifications:** routes count only paths that touch a character directly (not
+blasts that would land next to one); route values use the first living character's ATK; a block
+destroyed later in the same blast is not credited twice; the angle error is not part of the
+reliability average.
 
 Human gameplay acceptance is pending.

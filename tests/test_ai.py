@@ -7,10 +7,12 @@ every run and the tests are reproducible.
 import copy
 import os
 import re
+import time
 import unittest
 
-from ai import DIFFICULTY_SETTINGS, AIController, Plan
-from battle import MAX_ANGLE, MAX_POWER, MAX_STEPS, MIN_ANGLE, MIN_POWER, Battle
+from ai import DIFFICULTY_SETTINGS, AIController, Plan, find_routes, imagine, scan_aims, shot_value
+from battle import MAX_ANGLE, MAX_POWER, MAX_STEPS, MIN_ANGLE, MIN_POWER, ROUND_LIMIT, Battle
+from castle import DEFAULT_LAYOUT, MAX_BLOCKS, layout_problem
 from characters import ARCHETYPES, Archer, Engineer, Knight
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -55,7 +57,7 @@ def snapshot(battle):
     """Everything an action could change (to check that choosing changes nothing)."""
     state = [battle.active_side, battle.round_number, battle.projectile, battle.winner]
     for side in ("left", "right"):
-        state.append(battle.castles[side].total_hp())
+        state.append([block.hp for block in battle.castles[side].blocks])
         state.append((battle.cannons[side].angle, battle.cannons[side].power))
         for c in battle.teams[side].characters:
             state.append((c.hp, c.exp, c.level, c.is_defending, c.special_cooldown))
@@ -252,6 +254,138 @@ class CharacterChoiceTest(unittest.TestCase):
             self.assertNotEqual(plan.action, "special")
 
 
+class LayoutChoiceTest(unittest.TestCase):
+    """M3.4-B: the computer places its own cover, under the same rules as a player."""
+
+    def test_the_ai_cover_is_legal_and_uses_at_most_the_budget(self):
+        for difficulty in DIFFICULTY_SETTINGS:
+            for seed in range(30):
+                layout = AIController("right", difficulty, seed=seed).choose_layout()
+                self.assertIsNone(layout_problem(layout), layout)
+                self.assertLessEqual(len(layout), MAX_BLOCKS)
+                self.assertEqual(layout, tuple(sorted(layout)))
+                battle = combat([Knight], [Archer], layouts={"left": (), "right": layout})
+                self.assertEqual(battle.castles["right"].total_hp(), 100 * len(layout))
+
+    def test_the_ai_always_builds_the_tower_next_to_its_characters(self):
+        for seed in range(30):
+            layout = AIController("right", "normal", seed=seed).choose_layout()
+            self.assertEqual(len(layout), MAX_BLOCKS)          # the whole budget, never more
+            self.assertIn(0, layout)
+            self.assertIn(4, layout)
+
+    def test_the_same_seed_gives_the_same_cover(self):
+        for seed in range(10):
+            self.assertEqual(AIController("right", "hard", seed=seed).choose_layout(),
+                             AIController("right", "hard", seed=seed).choose_layout())
+
+    def test_different_seeds_give_different_covers(self):
+        layouts = {AIController("right", "easy", seed=seed).choose_layout() for seed in range(40)}
+        self.assertEqual(len(layouts), 6)                      # every possible tower layout appears
+
+
+class CoverAwarenessTest(unittest.TestCase):
+    """M3.4-B: the computer breaks cover only when the cover stands between it and a
+    living enemy, and prefers hitting a character when it can."""
+
+    def lone_knight(self, layout, attacker=Knight):
+        """LEFT (the AI) attacks a lone RIGHT Knight hiding behind `layout`; LEFT moves first."""
+        return combat([attacker], [Knight], layouts={"left": (), "right": layout})
+
+    def test_routes_list_the_blocks_between_the_cannon_and_a_character(self):
+        battle = self.lone_knight(DEFAULT_LAYOUT)
+        routes = find_routes(battle, "left", scan_aims(battle, 0))
+        self.assertTrue(routes)
+        layout = battle.castles["right"].layout
+        for target, blockers, value in routes:
+            self.assertEqual(target, 0)                           # the Knight, the only enemy
+            self.assertTrue(blockers)
+            self.assertGreater(value, 0)
+            self.assertNotIn(3, [layout[i] for i in blockers])    # the far column is never in the way
+
+    def test_a_shot_that_only_hits_cover_in_nobodys_way_is_worth_nothing(self):
+        battle = self.lone_knight((3, 7))                         # a tower by the enemy cannon
+        scan = scan_aims(battle, 0)
+        routes = find_routes(battle, "left", scan)
+        cover_only = [(angle, power) for angle, power, trial, events in scan
+                      if any(e["type"] == "explosion" and e["blocks_hit"] and not e["characters_hit"]
+                             for e in events)]
+        self.assertTrue(cover_only)
+        for angle, power, trial, events in scan:
+            if (angle, power) in cover_only:
+                self.assertEqual(shot_value(battle, trial, "left", routes), 0, (angle, power))
+
+    def test_with_an_open_shot_the_ai_attacks_the_character(self):
+        battle = self.lone_knight((3, 7))                         # the Knight stands in the open
+        for difficulty in DIFFICULTY_SETTINGS:
+            for seed in range(3):
+                plan = AIController("left", difficulty, seed=seed).choose(battle)
+                if plan.fires_a_shot():
+                    self.assertEqual(plan.goal, "damage", plan.reason)
+                    self.assertIn("RIGHT Knight", plan.reason)
+
+    def test_when_the_character_is_protected_the_ai_breaks_the_cover_in_front_of_it(self):
+        battle = self.lone_knight(DEFAULT_LAYOUT)
+        plan = AIController("left", "hard", seed=1).choose(battle)
+        self.assertEqual(plan.goal, "cover", plan.reason)
+        self.assertIn("cover in front of the RIGHT Knight", plan.reason)
+        # Carried out without aiming error, the planned shot damages a block that is in the way.
+        routes = find_routes(battle, "left", scan_aims(battle, 0))
+        in_the_way = {i for _, blockers, _ in routes for i in blockers}
+        trial, _ = imagine(battle, plan.actor_index, plan.action, plan.angle, plan.power)
+        damaged = {i for i, block in enumerate(trial.castles["right"].blocks)
+                   if block.hp < battle.castles["right"].blocks[i].hp}
+        self.assertTrue(damaged & in_the_way, (damaged, in_the_way))
+
+    def test_once_the_cover_is_broken_the_ai_goes_for_the_character(self):
+        battle = self.lone_knight(DEFAULT_LAYOUT)
+        for block in battle.castles["right"].blocks:
+            block.take_damage(100)                                # every block destroyed
+        plan = AIController("left", "hard", seed=1).choose(battle)
+        self.assertEqual(plan.goal, "damage", plan.reason)
+
+    def test_the_ai_reaches_and_defeats_a_protected_character_in_time(self):
+        # LEFT (the AI) against a lone Knight behind the full default cover that never shoots back.
+        for difficulty in ("normal", "hard"):
+            with self.subTest(difficulty=difficulty):
+                battle = combat([Knight], [Knight], layouts={"left": (), "right": DEFAULT_LAYOUT})
+                ai = AIController("left", difficulty, seed=11)
+                plans = []
+                while not battle.is_over():
+                    if battle.active_side == "left":
+                        plans.append(ai.take_turn(battle))
+                        fly(battle)
+                    else:
+                        pass_turn(battle)
+                self.assertEqual(battle.winner, "left")
+                self.assertLess(battle.round_number, ROUND_LIMIT)
+                # Never a turn spent on nothing: every shot aimed at a character or at cover in its way.
+                for plan in plans:
+                    if plan.fires_a_shot():
+                        self.assertIn(plan.goal, ("damage", "cover"), plan.reason)
+                        self.assertGreater(plan.score, 0, plan.reason)
+
+    def test_every_team_size_and_cover_gives_a_legal_plan(self):
+        for size in (1, 2, 3):
+            for layout in ((), DEFAULT_LAYOUT, (0, 1, 2, 4, 5, 6)):
+                with self.subTest(size=size, layout=layout):
+                    battle = right_to_move([Knight, Archer, Engineer][:size], [Archer, Engineer, Knight][:size],
+                                           layouts={"left": layout, "right": layout})
+                    for difficulty in DIFFICULTY_SETTINGS:
+                        plan = AIController("right", difficulty, seed=size).choose(battle)
+                        check_plan_is_legal(self, battle, plan)
+
+
+class DecisionTimeTest(unittest.TestCase):
+    def test_a_decision_takes_well_under_two_seconds(self):
+        # A generous bound so slow machines pass too; typical times are in the M3.4-B report.
+        battle = right_to_move([Knight, Archer, Engineer], [Archer, Engineer, Knight])
+        for difficulty in DIFFICULTY_SETTINGS:
+            start = time.perf_counter()
+            AIController("right", difficulty, seed=0).choose(battle)
+            self.assertLess(time.perf_counter() - start, 2.0, difficulty)
+
+
 class DefensiveBehaviourTest(unittest.TestCase):
     """Course requirement: a character below 50 % HP makes the AI more likely to Defend."""
 
@@ -339,12 +473,13 @@ class AccuracyTest(unittest.TestCase):
         self.assertLess(hard, 1.0, (easy, hard))                    # not perfectly accurate
 
     def test_only_targets_worth_something_are_listed(self):
-        # Hitting only blocks doesn't help win (M3.4-A), so it is never a target.
+        # A target is a hit on a character or on cover in front of one (M3.4-B); nothing else.
         battle = right_to_move([Knight], [Archer])
         targets = AIController("right", "easy", seed=0).find_targets(battle, 0)
         self.assertTrue(targets)
-        self.assertTrue(all(score > 0 for score, _, _, _ in targets))
-        self.assertTrue(all("Knight" in description for _, _, _, description in targets))
+        self.assertTrue(all(score > 0 for score, _, _, _, _ in targets))
+        self.assertTrue(all("LEFT Knight" in description for _, _, _, description, _ in targets))
+        self.assertEqual(targets, sorted(targets, key=lambda target: target[0], reverse=True))
 
     def test_hard_still_has_some_aiming_error(self):
         battle = right_to_move([Knight], [Archer], layouts=OPEN)
@@ -363,6 +498,34 @@ class MatchTest(unittest.TestCase):
                 ai = AIController("right", difficulty, seed=size)
                 play(self, battle, {"right": ai}, max_rounds=40)   # the left side only passes
                 self.assertEqual(battle.winner, "right")
+
+    def test_ai_matches_end_at_every_level_size_and_first_side_with_ai_placed_cover(self):
+        # M3.4-B: each AI picks its team and places its own cover. Every match must end by the
+        # round limit (an elimination or the timeout draw), with every AI turn legal (play()).
+        for index, difficulty in enumerate(DIFFICULTY_SETTINGS):
+            for size in (1, 2, 3):
+                first = ("left", "right")[(size + index) % 2]      # every level moves first on both sides
+                with self.subTest(difficulty=difficulty, size=size, first=first):
+                    ais = {side: AIController(side, difficulty, seed=10 * size + index + (side == "right"))
+                           for side in ("left", "right")}
+                    battle = combat(ais["left"].pick_team(size), ais["right"].pick_team(size),
+                                    layouts={side: ai.choose_layout() for side, ai in ais.items()},
+                                    first_side=first)
+                    play(self, battle, ais, max_rounds=ROUND_LIMIT + 1)
+                    self.assertTrue(battle.is_over())
+                    self.assertIn(battle.end_reason, ("elimination", "timeout", "both_lost"))
+                    self.assertLessEqual(battle.round_number, ROUND_LIMIT)
+                    if difficulty == "hard":
+                        self.assertEqual(battle.end_reason, "elimination")
+
+    def test_an_ai_match_that_reaches_the_round_limit_is_a_draw_and_the_ai_stops(self):
+        battle = combat([Knight], [Knight])
+        while battle.round_number < ROUND_LIMIT:                  # both sides defend until round 30
+            battle.perform_action(0, "defend")
+        ais = {side: AIController(side, "hard", seed=4) for side in ("left", "right")}
+        play(self, battle, ais, max_rounds=ROUND_LIMIT)           # one round: nobody can fall in it
+        self.assertEqual((battle.winner, battle.end_reason), ("draw", "timeout"))
+        self.assertIsNone(ais[battle.active_side].take_turn(battle))
 
     def test_two_ais_can_play_a_whole_3v3_match(self):
         battle = combat([Knight, Archer, Engineer], [Archer, Engineer, Knight])

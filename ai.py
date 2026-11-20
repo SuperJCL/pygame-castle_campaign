@@ -16,6 +16,10 @@ The difficulty (DIFFICULTY_SETTINGS) changes only these choices and the aiming
 error, never the damage, the cooldowns or which actions are allowed.
 
 Only the Python standard library is used: no Pygame and no machine learning.
+
+M3.4-A note: castle destruction no longer wins, so the AI now scores only damage to
+enemy characters (and Repair). It does not yet plan around cover or aim to break
+it; that redesign is M3.4-B.
 """
 import copy
 import random
@@ -95,10 +99,8 @@ def team_hp(team):
 def progress(before, after, side):
     """How much closer `side` is to winning in `after` than in `before` (0 = no progress).
 
-    Each way to win counts as the share of its remaining work that got done:
       elimination:  enemy HP removed / enemy HP that was left (+ a bonus per defeat)
-      castle:       enemy castle HP removed / HP it could still lose (if that rule is on)
-      Repair:       our castle HP restored / HP it could still lose (our loss moves away)
+      Repair:       our block HP restored / our cover's full HP (more cover protects us)
     """
     enemy = other_side(side)
     score = 0.0
@@ -108,11 +110,8 @@ def progress(before, after, side):
     defeated = (len(before.teams[enemy].alive_characters())
                 - len(after.teams[enemy].alive_characters()))
     score += DEFEAT_BONUS * defeated
-    if before.castle_loss_enabled:
-        damage = before.castles[enemy].total_hp() - after.castles[enemy].total_hp()
-        score += min(1.0, damage / max(1, before.castles[enemy].hp_before_falling()))
-        repaired = after.castles[side].total_hp() - before.castles[side].total_hp()
-        score += min(1.0, repaired / max(1, before.castles[side].hp_before_falling()))
+    repaired = after.castles[side].total_hp() - before.castles[side].total_hp()
+    score += max(0, repaired) / max(1, before.castles[side].max_hp)
     if after.winner == side:
         score += WIN_BONUS
     return score
@@ -139,7 +138,7 @@ def describe_target(hit, enemy):
     names, _ = hit
     if names:
         return f"the {enemy.upper()} {' and '.join(names)}"
-    return f"the {enemy.upper()} castle"
+    return f"the {enemy.upper()} cover"
 
 
 # ----- the controller ------------------------------------------------------------------
@@ -263,8 +262,8 @@ class AIController:
         """Imagine Attacks at many aims and list what they can hit, best first.
 
         Returns [(score, angle, power, description), ...] with one entry for each
-        different thing a shot can hit that helps to win (score above 0; with castle
-        loss switched off, the castle isn't a target). For each one the most forgiving
+        different thing a shot can hit that helps to win (score above 0, so a shot that
+        only damages blocks isn't a target yet). For each one the most forgiving
         aim is kept: the middle power of the angle at which the most powers hit it,
         so a small aiming error still hits.
         """
@@ -296,9 +295,10 @@ class AIController:
         for index, character in enumerate(team.characters):
             if isinstance(character, Engineer) and battle.why_not_allowed(index, "special") is None:
                 trial, _ = imagine(battle, index, "special")
-                percent = int(battle.castles[self.side].destruction_percent())
+                castle = battle.castles[self.side]
+                missing = castle.max_hp - castle.total_hp()
                 return Plan(index, "special", score=progress(battle, trial, self.side),
-                            reason=f"{character.name} uses Repair ({percent}% of the castle destroyed)")
+                            reason=f"{character.name} uses Repair ({missing} cover HP missing)")
         return None
 
     def with_aiming_error(self, plan):

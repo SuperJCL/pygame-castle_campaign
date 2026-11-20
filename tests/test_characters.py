@@ -16,7 +16,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def make_team(*characters, side="left"):
-    """A real Team (with its own fresh castle) for the given characters."""
+    """A real Team (with its own fresh default cover) for the given characters."""
     return Team(side, list(characters), Castle(side))
 
 
@@ -221,14 +221,14 @@ class ExperienceTest(unittest.TestCase):
 
 
 class AttackShotTest(unittest.TestCase):
-    def test_each_role_has_its_own_castle_damage(self):
+    def test_each_role_has_its_own_block_damage(self):
         for role, block_damage in ((Knight, 50), (Archer, 50), (Engineer, 60)):
             with self.subTest(role=role.__name__):
                 shot = role("X", "left").attack_shot()
                 self.assertEqual((shot.block_damage, shot.multiplier, shot.ignores_def),
                                  (block_damage, 1.0, False))
 
-    def test_castle_damage_does_not_grow_with_level(self):
+    def test_block_damage_does_not_grow_with_level(self):
         knight = Knight("K", "left")
         knight.gain_exp(90)                            # level 3
         self.assertEqual(knight.attack_shot().block_damage, 50)
@@ -251,7 +251,7 @@ class SpecialAbilityTest(unittest.TestCase):
         self.assertIn("Power Shot", message)
         self.assertEqual((shot.block_damage, shot.multiplier, shot.ignores_def), (75, 1.5, True))
 
-    def test_engineer_repair_fixes_the_team_castle(self):
+    def test_engineer_repair_fixes_the_team_cover(self):
         engineer = Engineer("E", "left")
         team = make_team(engineer)
         team.castle.blocks[0].take_damage(60)
@@ -261,7 +261,7 @@ class SpecialAbilityTest(unittest.TestCase):
         self.assertIn("Repair", message)
         self.assertIn("regains 150 HP", message)
         self.assertIsNone(shot)
-        self.assertEqual(team.castle.total_hp(), 1500 - 180 + 150)
+        self.assertEqual(team.castle.total_hp(), 600 - 180 + 150)    # the default cover: 6 x 100 HP
 
     def test_engineer_repair_text_shows_the_real_amount(self):
         self.assertEqual(Engineer.REPAIR_POOL, 150)

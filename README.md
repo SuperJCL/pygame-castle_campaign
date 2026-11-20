@@ -1,14 +1,20 @@
 # Castle Siege
 
 A 2D side-view artillery game written in Python with Pygame, for the CS5001 final project.
-Two castles face each other across a field, each with a cannon on top of its tower and a team
-of characters (Knight, Archer, Engineer) standing behind it. The teams take turns: pick a
-character, aim the cannon, and Attack, Defend or use a Special ability.
+Two teams of characters (Knight, Archer, Engineer) face each other across a field. Each team
+stands behind its own cover blocks and shares one cannon standing in front of the cover. The
+teams take turns: pick a character, aim the cannon, and Attack, Defend or use a Special ability.
+**You win by defeating every enemy character.**
 
-**Current status: Milestone 3.1 — Player vs AI.** You play the LEFT team against a computer
-opponent (Easy, Normal or Hard) that picks and plays the RIGHT team. Two people can still play
-each other on one computer ("Two players" mode). The design and roadmap are in
-[docs/M0_design.md](docs/M0_design.md).
+**Current status: Milestone 3.4-A — combat foundation.**
+- Only elimination wins. Castle destruction is no longer a victory condition.
+- Each team's cover is a layout of up to 6 blocks on 8 fixed slots, and cover shields characters
+  from explosions.
+- Both teams currently use the same default cover. Choosing your own layout on a placement screen
+  is planned for M3.4-B, and the characters' run to the cannon for M3.4-C.
+
+You play the LEFT team against a computer opponent (Easy, Normal or Hard), or two people play
+each other on one computer. The design and roadmap are in [docs/M0_design.md](docs/M0_design.md).
 
 ## Requirements
 - Python 3 (developed and tested with Python 3.11.9 on Windows)
@@ -48,35 +54,37 @@ In VS Code you can also pick the `.venv` interpreter (**Python: Select Interpret
      **Two players** (both teams are played on this computer, taking turns).
    - **Computer:** **Easy**, **Normal** (default) or **Hard** (Player vs AI only).
    - Choose **1 v 1**, **2 v 2** or **3 v 3** (characters per team).
-   - Click character cards to add them to your team; click again to remove one. Each card shows
-     HP, ATK, DEF, castle damage and the special ability. Against the computer you pick only the
-     LEFT team; the computer picks its own team of the same size when the battle starts.
-   - A team can't have the same role twice. The first pick (Slot 1) stands nearest its castle.
+   - Click character cards to add them to your team; click again to remove one.
+     - Each card shows HP, ATK, DEF, block damage and the special ability.
+     - Against the computer you pick only the LEFT team; the computer picks its own team of the
+       same size when the battle starts.
+   - A team can't have the same role twice. The first pick (Slot 1) stands at the front, right
+     behind the cover.
    - Press **START BATTLE** when the team(s) are full.
-2. **Battle.** The LEFT team moves first in the first match; then the turns alternate. The HUD
-   shows the round, e.g. "Round 7 / 30". On your turn:
+2. **Battle.** The LEFT team moves first in the first match, then the turns alternate.
+   - **The HUD** shows the round (e.g. "Round 7 / 30") and, for each team, how many characters
+     are still standing and how many cover blocks are left (e.g. "LEFT  2/3 standing   cover 5/6").
    - **Choose who acts:** click one of your living characters, or press **1 / 2 / 3**. The chosen
      character has a yellow marker, and the panel shows its HP, ATK, DEF, Level, EXP and special.
    - **Aim** with the arrow keys (the orange arrow; longer means more power).
    - **Act:**
-     - **ATTACK** (or **SPACE**) fires the cannon with that aim.
+     - **ATTACK** (or **SPACE**) fires your team's cannon with that aim and the chosen
+       character's stats.
      - **DEFEND** halves the damage that character takes until your next turn, and also halves
-       the damage enemy shots do to your castle blocks (**Castle Guard**).
+       the damage enemy shots do to your cover blocks (**Cover Guard**).
      - **SPECIAL** uses its ability. A greyed-out button can't be used right now, and the panel
        says why.
 
    On the computer's turn the buttons are greyed out. After a short pause it chooses a character
-   and an action by itself, and the combat log shows its choice (e.g. "AI (Normal): Archer
-   attacks the LEFT castle.") and what happened.
-3. **Result.** The result screen shows the winner (or DRAW), why the match ended and how many
-   rounds were played. Choose **Rematch** (same teams, same computer level) or **Change teams**.
-   **R** is a rematch shortcut (it also restarts a match in progress).
+   and an action by itself. The combat log shows its choice (e.g. "AI (Normal): Archer attacks
+   the LEFT Knight.") and what happened.
+3. **Result.** The result screen shows the winner, or DRAW, why the match ended and how many
+   rounds were played.
+   - Choose **Rematch** (same teams, same cover, same computer level) or **Change teams**.
+     **R** is a rematch shortcut (it also restarts a match in progress).
    - **Who moves first alternates:** each rematch swaps the side that moves first (LEFT, RIGHT,
      LEFT, …). Choosing teams again starts with LEFT. When the computer moves first, it plays its
      turn by itself.
-
-The selection screen also has **Classic cannon duel (M1)**: the original two-cannon prototype
-without characters (SPACE fires).
 
 ## Controls
 | Input | Action |
@@ -86,9 +94,9 @@ without characters (SPACE fires).
 | Up / Down | Raise / lower the cannon's angle (5°–80°) |
 | Left / Right | Decrease / increase power (10–100) |
 | Shift + arrow | Change by 5 instead of 1 |
-| Space | ATTACK (in the classic duel: fire) |
+| Space | ATTACK |
 | Enter | START BATTLE (selection screen) |
-| R | Rematch: restart with the same teams (the side that moves first swaps; not in the classic duel) |
+| R | Rematch: restart with the same teams and cover (the side that moves first swaps) |
 | Esc | Quit |
 
 Holding an arrow key keeps changing the value. SPACE acts once per press.
@@ -98,51 +106,66 @@ Chinese and other input methods (IMEs) are turned off inside the game window, so
 to switch the keyboard to English first.
 
 ## Rules
-- **Shots:** a shot flies in an arc under gravity. It explodes when it hits an enemy block, an
-  enemy character or the ground. Shots pass through their own side (no friendly fire), and a shot
-  that leaves the screen sideways is a miss.
-- **Explosions:** every enemy block and character within 50 px of an explosion is damaged.
-  - **Characters** take ATK − DEF damage (at least 1), or half that if they are defending.
-  - **Blocks** take the attacker's castle damage: Knight 50, Archer 50, Engineer 60. Blocks start
-    with 100 HP; damaged blocks get darker, and destroyed blocks disappear.
-- **Castle Guard:** while one of a team's characters is defending (Defend or Rally), enemy shots
-  do half damage to that team's castle blocks, rounded down (50 → 25, 60 → 30, Power Shot 75 → 37).
-  It ends with the Defend, when that team's next turn starts, so it covers one enemy action. Several
-  defenders don't add up: it is always half. A guarded castle has a blue outline and a
-  **GUARDED** badge, and the combat log says "Castle Guard halved the damage to the castle."
-  Added in M3.2 so that Defend can protect the castle.
+- **Battlefield:** each side, from the edge of the screen inward, has its characters (slots 1–3),
+  then its cover slots, then its cannon. The two sides are mirror images.
+- **Cover:** each team may place up to **6 blocks** (100 HP each) on its **8 fixed cover slots**,
+  in 4 columns × 2 rows.
+  - A raised block must stand on a block.
+  - A slot holds one block.
+  - Blocks never overlap characters, cannons or the screen's text and buttons.
+  - Unused blocks give no protection. A team may even place none.
+  - For now (M3.4-A) both teams use the default cover: the whole bottom row plus the two raised
+    blocks nearest the characters.
+- **Shots:** a shot flies in an arc under gravity. It explodes on the **first** enemy block or
+  enemy character it touches, or on the ground.
+  - The whole path of every step is checked, so a fast shot can't jump through a thin target.
+  - Shots pass through their own side (no friendly fire).
+  - A shot that leaves the screen sideways is a miss.
+  - Destroyed blocks and defeated characters no longer stop shots.
+- **Explosions:**
+  - A **directly hit** character takes ATK − DEF damage (at least 1), or half that if it is
+    defending.
+  - Every other enemy character within 50 px takes the same damage, **unless a standing block of
+    its team is on the straight line between the explosion and the character**. That block is
+    **cover** and absorbs the whole blast for that character. The log says "… was shielded by
+    cover."
+  - Every enemy block within 50 px takes the attacker's block damage: Knight 50, Archer 50,
+    Engineer 60. Damaged blocks get darker, and destroyed blocks disappear.
+  - Everything is decided at the moment of impact, before any damage is done. So a block that
+    this explosion destroys still shields the characters behind it from this explosion, but not
+    from the next one.
+  - Characters behind cover can still be hit by a shot that comes down on them from above.
+- **Cover Guard** (called Castle Guard before M3.4):
+  - While one of a team's characters is defending (Defend or Rally), enemy shots do half damage
+    to that team's blocks, rounded down (50 → 25, 60 → 30, Power Shot 75 → 37).
+  - It ends with the Defend, when that team's next turn starts, so it covers one enemy action.
+  - Several defenders don't add up: it is always half.
+  - Guarded cover has a blue outline and a **GUARDED** badge.
 - **Specials:**
-  - **Knight – Rally:** all living allies defend until your next turn (so the castle is guarded
+  - **Knight – Rally:** all living allies defend until your next turn (so the cover is guarded
     too). Cooldown 4 rounds.
   - **Archer – Power Shot:** an aimed shot doing ATK × 1.5 damage, ignoring DEF, and 75 per
     block. Cooldown 3.
-  - **Engineer – Repair:** up to 150 castle HP (75 before M3.2), most damaged blocks first; no
-    block goes above 100 HP and destroyed blocks stay destroyed. Only possible when a block is
-    damaged. Cooldown 4.
+  - **Engineer – Repair:** up to 150 HP for the team's damaged blocks, most damaged first.
+    - No block goes above 100 HP, and destroyed blocks are not rebuilt.
+    - Only possible when a standing block is damaged.
+    - Cooldown 4.
 
   A special used in round *r* is ready again in round *r + cooldown*. Each character shows
   "ready" or "wait N" under its feet.
 - **EXP:** +10 for a shot that damages something, +20 more for each enemy it defeats, and +5 for
   Rally or Repair. Level-ups (30 × level EXP) raise HP, ATK and DEF, up to Level 5.
-- **Winning:** defeat every enemy character, **or** destroy 60 % of the enemy castle (our extra
-  rule; it can be switched off for elimination-only play with `Battle(castle_loss_enabled=False)`).
-- **Round limit (our design rule, not a course requirement):** a team match ends after 30
-  complete rounds; a round is complete once both teams have acted, whichever side started. An
-  ordinary win always counts first, even on the very last turn. If nobody has won, these decide
-  in order:
-  1. more living characters;
-  2. a higher share of character HP (total HP ÷ total current max HP, defeated characters
-     included);
-  3. more castle HP left (as a share of the castle's maximum);
-  4. otherwise it is a draw.
-
-  The shares are compared exactly (by cross-multiplying, no decimals). The classic M1 duel has no
-  round limit.
+- **Winning:** defeat every enemy character. Destroying blocks never wins by itself.
+- **Round limit (our safety rule, not a course requirement):** a match that reaches the end of
+  round 30 without an elimination is a **draw** (a timeout).
+  - A round is complete once both teams have acted, whichever side started.
+  - An elimination always counts first, even on the very last turn.
+  - HP and cover never pick a winner.
 - **Damage formula:** deterministic, so tests can check exact numbers. The instructor's
   reference formula adds a random −5 to +10.
-- **Balance (M3.2):** Castle Guard and Repair 150 were chosen with a seeded AI-vs-AI benchmark
-  (`scripts/balance_benchmark.py`); see `docs/M3.2_balance_report.md`. Not yet confirmed by
-  human play-testing.
+- **Balance:** Cover Guard 50 % and Repair 150 come from the M3.2 balance work
+  (`docs/M3.2_balance_report.md`). That benchmark measured the old castle rules, so its numbers
+  don't apply to M3.4. Not yet confirmed by human play-testing.
 
 ## The computer opponent (`ai.py`)
 - It plays by the same rules as you: it can only act through the same `Battle.perform_action()`
@@ -150,7 +173,10 @@ to switch the keyboard to English first.
   character, or act out of turn.
 - **Aiming:** it "imagines" shots at many angles and powers on a copy of the battle (the real
   physics and damage rules run on the copy) and sees what each would hit. It ranks the options by
-  how much closer each brings it to winning, then adds a random aiming error.
+  how much damage each does to the enemy characters, then adds a random aiming error. Repair is
+  chosen when restoring cover is worth more.
+- **Not yet (M3.4-B):** it does not yet plan around cover or try to break the blocks protecting
+  a character.
 - **Defending:** when one of its characters is below half HP, it is more likely to Defend (or to
   use the Knight's Rally). It never defends two turns in a row.
 - **Difficulty** changes only how carefully it chooses and how accurately it aims:
@@ -178,16 +204,15 @@ python -m unittest discover tests
 |---|---|
 | `main.py` | Pygame window, screens (team selection, battle, result), buttons, mouse and keyboard input, the computer's turn, drawing and the main loop (the only file that uses Pygame) |
 | `ai.py` | `AIController`: the computer opponent (team choice, Defend / Attack / Special choice, aiming) and its difficulty table |
-| `battle.py` | Cannons, projectile physics, turns, explosions and victory rules; `Team` and team combat (Attack / Defend / Special) |
-| `castle.py` | `Block` and `Castle` classes: castle layout, damage, repair and destruction percentage |
+| `battle.py` | Cannons, projectile physics, collision along the flight path, explosions and cover, turns, the round limit and victory; `Team` and team combat (Attack / Defend / Special) |
+| `castle.py` | `Block`, the 8 cover slots and layout rules (`layout_problem`), and `Castle` (one team's cover): damage and repair |
 | `characters.py` | `Character` base class with `Knight`, `Archer`, `Engineer`: HP/ATK/DEF, damage, defend, cooldowns, EXP, levels and each role's special ability |
-| `tests/` | `unittest` tests for `castle.py`, `battle.py` (M1 duel), team combat (`test_combat.py`), `characters.py`, `ai.py` and `main.py` |
-| `scripts/balance_benchmark.py` | M3.2 balance benchmark: seeded AI-vs-AI matches under several rule variants (not part of the game; run it from the project folder) |
-| `docs/M0_design.md` | Design: rules, architecture, roadmap (Revision 3 decisions at the top) |
+| `tests/` | `unittest` tests for `castle.py`, `battle.py` (physics and collision), team combat and cover (`test_combat.py`), `characters.py`, `ai.py` and `main.py` |
+| `docs/M0_design.md` | Design: rules, architecture, roadmap (the latest decisions at the top) |
 | `docs/M3.1_balance_analysis.md` | M3.1 analysis of Defend and Repair (recommendations only, nothing changed) |
-| `docs/M3.2_balance_report.md` | M3.2 balance experiment: method, results, the rule changes made and their limits |
-| `docs/M3.2_benchmark_results.md`, `docs/M3.2_benchmark_results_easy.md` | The benchmark's generated result tables |
-| `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules |
+| `docs/M3.2_balance_report.md` | M3.2 balance experiment under the old castle rules (historical; its script is in commit `86b90fa`) |
+| `docs/M3.2_benchmark_results.md`, `docs/M3.2_benchmark_results_easy.md` | That benchmark's generated result tables (historical) |
+| `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules (updated for M3.4-A) |
 | `docs/Rebound_reference_review.md` | Review of a reference project (ideas only) |
 
 ## References

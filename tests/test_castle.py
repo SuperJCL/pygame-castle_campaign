@@ -1,34 +1,26 @@
-"""Unit tests for castle.py (Block and Castle).
+"""Unit tests for castle.py (Block, cover layouts and Castle).
 
 Run from the project root:  python -m unittest discover tests
-Expected values are worked out by hand from the castle template in docs/M0_design.md §4.5.
+Expected values are worked out by hand from the slot positions in docs/M0_design.md
+(M3.4-A): 32 px blocks, ground at y = 560, left columns at x 172, 204, 236 and 268.
 """
+import itertools
 import unittest
 
-from castle import Block, Castle
+from castle import (BLOCK_HP, DEFAULT_LAYOUT, MAX_BLOCKS, SLOT_COUNT, Block, Castle,
+                    layout_problem, slot_position)
 
-
-# Top-left corners (x, y) of the 15 blocks, derived by hand from the template
-# ("....##" x3, "...###", "######"), 32 px blocks, ground at y = 560.
-LEFT_BLOCKS = {
-    (328, 400), (360, 400),
-    (328, 432), (360, 432),
-    (328, 464), (360, 464),
-    (296, 496), (328, 496), (360, 496),
-    (200, 528), (232, 528), (264, 528), (296, 528), (328, 528), (360, 528),
-}
-# The right castle is the left one mirrored: x' = 1280 - x - 32.
-RIGHT_BLOCKS = {
-    (920, 400), (888, 400),
-    (920, 432), (888, 432),
-    (920, 464), (888, 464),
-    (952, 496), (920, 496), (888, 496),
-    (1048, 528), (1016, 528), (984, 528), (952, 528), (920, 528), (888, 528),
-}
+# Top-left corners (x, y) of the 8 cover slots, by hand. Slots 0-3 are the bottom row
+# (slot 0 nearest the team's characters); slots 4-7 sit on top of slots 0-3.
+LEFT_SLOTS = [(172, 528), (204, 528), (236, 528), (268, 528),
+              (172, 496), (204, 496), (236, 496), (268, 496)]
+# The right side is the mirror image: x' = 1280 - x - 32.
+RIGHT_SLOTS = [(1076, 528), (1044, 528), (1012, 528), (980, 528),
+               (1076, 496), (1044, 496), (1012, 496), (980, 496)]
 
 
 def positions(blocks):
-    return {(block.x, block.y) for block in blocks}
+    return [(block.x, block.y) for block in blocks]
 
 
 class BlockTest(unittest.TestCase):
@@ -57,116 +49,123 @@ class BlockTest(unittest.TestCase):
         self.assertFalse(block.contains(132, 210))
         self.assertFalse(block.contains(110, 199.9))
 
+    def test_rect_is_the_32_px_square(self):
+        self.assertEqual(Block(100, 200).rect(), (100, 200, 32, 32))
 
-class CastleLayoutTest(unittest.TestCase):
-    def test_new_castle_has_15_full_blocks(self):
-        castle = Castle("left")
-        self.assertEqual(len(castle.blocks), 15)
-        self.assertTrue(all(block.hp == 100 for block in castle.blocks))
-        self.assertEqual(castle.total_hp(), 1500)
-        self.assertEqual(castle.destruction_percent(), 0.0)
-        self.assertFalse(castle.has_fallen())
 
-    def test_left_castle_matches_template(self):
-        self.assertEqual(positions(Castle("left").blocks), LEFT_BLOCKS)
+class LayoutTest(unittest.TestCase):
+    def test_each_side_has_8_slots_in_two_rows(self):
+        self.assertEqual(SLOT_COUNT, 8)
+        self.assertEqual([slot_position("left", s) for s in range(8)], LEFT_SLOTS)
 
-    def test_right_castle_is_the_mirror_image(self):
-        self.assertEqual(positions(Castle("right").blocks), RIGHT_BLOCKS)
+    def test_the_right_slots_mirror_the_left_slots(self):
+        self.assertEqual([slot_position("right", s) for s in range(8)], RIGHT_SLOTS)
+
+    def test_a_castle_has_one_full_block_on_each_chosen_slot(self):
+        castle = Castle("right", (4, 0, 1))
+        self.assertEqual(castle.layout, (0, 1, 4))                 # kept in slot order
+        self.assertEqual(positions(castle.blocks), [RIGHT_SLOTS[0], RIGHT_SLOTS[1], RIGHT_SLOTS[4]])
+        self.assertTrue(all(block.hp == BLOCK_HP for block in castle.blocks))
+        self.assertEqual((castle.max_hp, castle.total_hp()), (300, 300))
+
+    def test_the_default_layout_is_legal_and_uses_the_whole_budget(self):
+        self.assertEqual(MAX_BLOCKS, 6)
+        self.assertEqual(len(DEFAULT_LAYOUT), MAX_BLOCKS)
+        self.assertIsNone(layout_problem(DEFAULT_LAYOUT))
+        self.assertEqual(positions(Castle("left").blocks), [LEFT_SLOTS[s] for s in DEFAULT_LAYOUT])
+
+    def test_a_team_may_place_no_blocks_at_all(self):
+        castle = Castle("left", ())
+        self.assertEqual(castle.blocks, ())
+        self.assertEqual((castle.max_hp, castle.total_hp()), (0, 0))
+        self.assertFalse(castle.is_damaged())
+        self.assertEqual(castle.apply_blast(200, 540, radius=50, damage=50), (0, 0))
+
+    def test_illegal_layouts_are_explained_and_refused(self):
+        cases = [((0, 1, 2, 3, 4, 5, 6), "at most 6"),          # over the budget
+                 ((0, 0), "only one block"),                   # the same slot twice
+                 ((8,), "0 to 7"), ((-1,), "0 to 7"), (("1",), "0 to 7"),
+                 ((5,), "needs a block under it"),             # slot 5 would float over slot 1
+                 ((0, 1, 6), "needs a block under it")]
+        for layout, words in cases:
+            with self.subTest(layout=layout):
+                self.assertIn(words, layout_problem(layout))
+                with self.assertRaises(ValueError):
+                    Castle("left", layout)
+
+    def test_there_are_76_legal_layouts(self):
+        # By hand: k bottom blocks and j raised blocks on top of them, k + j <= 6:
+        # 1 + 4*2 + 6*4 + 4*8 + 1*11 = 76.
+        legal = [subset for size in range(SLOT_COUNT + 1)
+                 for subset in itertools.combinations(range(SLOT_COUNT), size)
+                 if layout_problem(subset) is None]
+        self.assertEqual(len(legal), 76)
 
 
 class BlastTest(unittest.TestCase):
     def test_blast_damages_only_blocks_whose_centre_is_within_radius(self):
-        castle = Castle("right")
-        # Impact on the front face, bottom row. Centre distances (by hand):
-        # (904,544) 16 px, (936,544) 48 px, (904,512) 35.8 px -> hit;
-        # (968,544) 80 px, (936,512) 57.7 px, (904,480) 66 px -> not hit.
-        blocks_hit, damage = castle.apply_blast(888, 544, radius=50, damage=30)
-        self.assertEqual(blocks_hit, 3)
-        self.assertEqual(damage, 90)
-        damaged = {(b.x, b.y) for b in castle.blocks if b.hp < 100}
-        self.assertEqual(damaged, {(888, 528), (920, 528), (888, 496)})
-        self.assertAlmostEqual(castle.destruction_percent(), 6.0)
+        castle = Castle("right")                       # default layout: slots 0-5
+        # Centre distances from (1040, 500), by hand: slot 5 (1060,512) 23.3 px,
+        # slot 1 (1060,544) 48.3 px, slot 2 (1028,544) 45.6 px -> hit;
+        # slot 4 (1092,512) 53.4 px, slot 3 (996,544) 62.2 px, slot 0 (1092,544) 68.1 px -> not hit.
+        self.assertEqual(castle.apply_blast(1040, 500, radius=50, damage=30), (3, 90))
+        damaged = [(b.x, b.y) for b in castle.blocks if b.hp < 100]
+        self.assertEqual(sorted(damaged), sorted([RIGHT_SLOTS[1], RIGHT_SLOTS[2], RIGHT_SLOTS[5]]))
 
     def test_blast_radius_boundary_is_inclusive(self):
-        castle = Castle("left")
-        # Block (200,528) has centre (216,544). (186,584) is exactly 50 px away (30-40-50).
-        self.assertEqual(castle.apply_blast(186, 584, radius=50, damage=30), (1, 30))
-        # One pixel further left is 50.6 px away: nothing is hit.
-        self.assertEqual(castle.apply_blast(185, 584, radius=50, damage=30), (0, 0))
+        castle = Castle("left", (0,))                  # one block, centre (188, 544)
+        self.assertEqual(castle.apply_blast(158, 584, radius=50, damage=30), (1, 30))   # 30-40-50
+        self.assertEqual(castle.apply_blast(157, 584, radius=50, damage=30), (0, 0))    # 50.6 px
 
     def test_destroyed_block_stops_blocking_and_takes_no_more_damage(self):
         castle = Castle("right")
-        target = castle.block_at(904, 544)          # front-bottom block (888,528)
+        target = castle.block_at(1050, 540)            # slot 1 (1044, 528)
         self.assertIsNotNone(target)
         target.take_damage(100)
-        self.assertIsNone(castle.block_at(904, 544))
-        self.assertEqual(len(castle.alive_blocks()), 14)
-        # Same blast as above: only the two surviving blocks in range are hit.
-        self.assertEqual(castle.apply_blast(888, 544, radius=50, damage=30), (2, 60))
+        self.assertIsNone(castle.block_at(1050, 540))
+        self.assertEqual(len(castle.alive_blocks()), 5)
+        self.assertEqual(castle.apply_blast(1040, 500, radius=50, damage=30), (2, 60))
 
 
 class RepairTest(unittest.TestCase):
     def test_repair_heals_the_most_damaged_blocks_first_and_skips_destroyed_ones(self):
         # docs/M0_design.md §3.4 example: HP [100, 40, 70, 0] -> [100, 100, 85, 0].
-        castle = Castle("left")
-        full, low, mid, gone = castle.blocks[:4]
+        castle = Castle("left", (0, 1, 2, 3))
+        full, low, mid, gone = castle.blocks
         low.take_damage(60)                     # 40 HP
         mid.take_damage(30)                     # 70 HP
         gone.take_damage(100)                   # destroyed
         self.assertEqual(castle.repair(75), 75)  # 60 to the 40-HP block, 15 to the 70-HP block
         self.assertEqual([b.hp for b in (full, low, mid, gone)], [100, 100, 85, 0])
         self.assertTrue(gone.is_destroyed())
-        self.assertEqual(len(castle.alive_blocks()), 14)
+        self.assertEqual(len(castle.alive_blocks()), 3)
 
     def test_repair_never_goes_above_full_health(self):
-        castle = Castle("left")
-        a, b = castle.blocks[:2]
+        castle = Castle("left", (0, 1))
+        a, b = castle.blocks
         a.take_damage(10)                       # 90 HP
         b.take_damage(5)                        # 95 HP
-        self.assertEqual(castle.repair(75), 15)  # only 15 HP were missing; the rest is lost
+        self.assertEqual(castle.repair(150), 15)  # only 15 HP were missing; the rest is lost
         self.assertEqual((a.hp, b.hp), (100, 100))
 
-    def test_repair_ties_go_to_the_leftmost_block(self):
-        castle = Castle("left")
-        leftmost = castle.block_at(210, 540)    # block (200, 528)
-        tower_top = castle.block_at(370, 410)   # block (360, 400)
-        leftmost.take_damage(50)
-        tower_top.take_damage(50)
-        castle.repair(30)
-        self.assertEqual((leftmost.hp, tower_top.hp), (80, 50))
+    def test_repair_ties_go_to_the_lower_slot_on_both_sides(self):
+        # Equal HP: the lower slot number first, so mirrored castles are repaired alike.
+        for side in ("left", "right"):
+            with self.subTest(side=side):
+                castle = Castle(side, (0, 3))
+                near, far = castle.blocks       # slot 0 (next to the characters), slot 3
+                near.take_damage(50)
+                far.take_damage(50)
+                castle.repair(30)
+                self.assertEqual((near.hp, far.hp), (80, 50))
 
     def test_only_damaged_surviving_blocks_count_as_repairable(self):
-        castle = Castle("left")
+        castle = Castle("left", (0, 1))
         self.assertFalse(castle.is_damaged())
         castle.blocks[0].take_damage(100)       # destroyed blocks can't be repaired
         self.assertFalse(castle.is_damaged())
         castle.blocks[1].take_damage(1)
         self.assertTrue(castle.is_damaged())
-
-
-class DestructionTest(unittest.TestCase):
-    def test_castle_falls_at_exactly_60_percent(self):
-        castle = Castle("left")
-        blocks = castle.blocks
-        for block in blocks[:8]:
-            block.take_damage(100)                  # 800 damage
-        blocks[8].take_damage(99)                   # 899 damage = 59.93 %
-        self.assertAlmostEqual(castle.destruction_percent(), 59.9333, places=3)
-        self.assertFalse(castle.has_fallen())
-        blocks[8].take_damage(1)                    # 900 damage = 60 %
-        self.assertEqual(castle.destruction_percent(), 60.0)
-        self.assertTrue(castle.has_fallen())
-
-    def test_hp_before_falling_is_what_the_castle_can_still_lose(self):
-        castle = Castle("left")
-        self.assertEqual(castle.hp_before_falling(), 900)          # 60 % of 1500
-        castle.blocks[0].take_damage(100)
-        castle.blocks[1].take_damage(30)
-        self.assertEqual(castle.hp_before_falling(), 900 - 130)
-        for block in castle.blocks[2:10]:
-            block.take_damage(100)                                  # 800 more: 930 lost
-        self.assertEqual(castle.hp_before_falling(), 0)             # fallen: nothing left to lose
-        self.assertTrue(castle.has_fallen())
 
 
 if __name__ == "__main__":

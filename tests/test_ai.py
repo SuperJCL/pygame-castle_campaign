@@ -14,7 +14,10 @@ from battle import MAX_ANGLE, MAX_POWER, MAX_STEPS, MIN_ANGLE, MIN_POWER, Battle
 from characters import ARCHETYPES, Archer, Engineer, Knight
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HARMLESS = (80, 10)          # falls back on the shooter's own side: no damage (see test_combat.py)
+HARMLESS = (80, 10)          # comes down beside the shooter's own cannon: no damage (see test_combat.py)
+
+
+OPEN = {"left": (), "right": ()}   # no cover blocks
 
 
 def combat(left, right, **options):
@@ -130,7 +133,7 @@ class SetupTest(unittest.TestCase):
             self.assertNotIn("import pygame", f.read())
 
     def test_the_ai_changes_the_battle_only_through_actions_and_aiming(self):
-        # HP and castle blocks change only inside Battle.perform_action(), never from ai.py.
+        # HP and cover blocks change only inside Battle.perform_action(), never from ai.py.
         with open(os.path.join(PROJECT_ROOT, "ai.py"), encoding="utf-8") as f:
             source = f.read()
         forbidden = [r"take_damage", r"take_hit", r"restore\(", r"\.repair\(", r"apply_blast",
@@ -234,10 +237,10 @@ class CharacterChoiceTest(unittest.TestCase):
         self.assertEqual(actions[1:3], ["attack", "attack"])     # rounds 2 and 3: recharging
         self.assertEqual(actions[3], "special")                  # round 4 = 1 + 3: ready again
 
-    def test_hard_repairs_a_badly_damaged_castle(self):
+    def test_hard_repairs_badly_damaged_cover(self):
         battle = right_to_move([Knight], [Engineer])
         for block in battle.castles["right"].blocks:
-            block.take_damage(50)                                # 50 % destroyed: close to falling
+            block.take_damage(50)                                # half of every block's HP is gone
         plan = AIController("right", "hard", seed=5).choose(battle)
         self.assertEqual((plan.actor_index, plan.action), (0, "special"))
         self.assertIn("Repair", plan.reason)
@@ -316,11 +319,11 @@ class DefensiveBehaviourTest(unittest.TestCase):
 
 class AccuracyTest(unittest.TestCase):
     def hit_rate(self, difficulty, trials=20):
-        """How often the AI's shots damage an enemy character. Castle damage doesn't count
-        (castle loss is off), so the AI always aims at the left Knight."""
+        """How often the AI's shots damage an enemy character. Block damage doesn't count,
+        so the AI always aims at the left Knight (the field has no cover here)."""
         hits = shots = 0
         for seed in range(trials):
-            battle = right_to_move([Knight], [Archer], castle_loss_enabled=False)
+            battle = right_to_move([Knight], [Archer], layouts=OPEN)
             plan = AIController("right", difficulty, seed=seed).take_turn(battle)
             if not plan.fires_a_shot():
                 continue                                          # Easy sometimes defends at random
@@ -336,15 +339,15 @@ class AccuracyTest(unittest.TestCase):
         self.assertLess(hard, 1.0, (easy, hard))                    # not perfectly accurate
 
     def test_only_targets_worth_something_are_listed(self):
-        # With castle loss off, hitting the castle doesn't help win, so it is never a target.
-        battle = right_to_move([Knight], [Archer], castle_loss_enabled=False)
+        # Hitting only blocks doesn't help win (M3.4-A), so it is never a target.
+        battle = right_to_move([Knight], [Archer])
         targets = AIController("right", "easy", seed=0).find_targets(battle, 0)
         self.assertTrue(targets)
         self.assertTrue(all(score > 0 for score, _, _, _ in targets))
         self.assertTrue(all("Knight" in description for _, _, _, description in targets))
 
     def test_hard_still_has_some_aiming_error(self):
-        battle = right_to_move([Knight], [Archer], castle_loss_enabled=False)
+        battle = right_to_move([Knight], [Archer], layouts=OPEN)
         aims = {(p.angle, p.power) for p in
                 (AIController("right", "hard", seed=s).choose(battle) for s in range(8))}
         self.assertGreater(len(aims), 1)

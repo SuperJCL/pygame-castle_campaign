@@ -4,9 +4,9 @@ Screens (Game.state):
   "select"  team selection: mode (Player vs AI or two players), AI level, team size
             (1v1, 2v2 or 3v3) and the characters
   "battle"  the battlefield: pick a character, aim the cannon, pick an action
-  "result"  the battlefield with the winner, plus Rematch / Change teams buttons
-The selection screen can also start the classic cannon duel (the M1 prototype,
-with no characters).
+  "result"  the battlefield with the winner (or DRAW), plus Rematch / Change teams buttons
+Each team has its cover blocks in front of its characters and one cannon in front of
+the cover. Until the placement screen exists (M3.4-B), both teams use the default cover.
 
 Player vs AI: the human plays LEFT and the computer (ai.py) picks and plays RIGHT.
 Two players: both teams play on this computer and take turns ("hot seat").
@@ -21,7 +21,7 @@ import pygame
 
 from ai import DIFFICULTY_SETTINGS, AIController
 from battle import BLAST_RADIUS, FIELD_WIDTH, MAX_TEAM_SIZE, ROUND_LIMIT, Battle, direction, other_side
-from castle import BLOCK_SIZE, CASTLE_X, GROUND_Y
+from castle import BLOCK_SIZE, COLUMN_X, GROUND_Y
 from characters import ARCHETYPES, MAX_LEVEL, Archer, Knight
 
 WINDOW_WIDTH = FIELD_WIDTH        # 1280
@@ -39,7 +39,6 @@ PANEL_COLOR = (38, 46, 58)
 TEXT_COLOR = (25, 25, 35)
 LIGHT_TEXT = (235, 238, 242)
 DIM_TEXT = (160, 166, 176)
-HINT_COLOR = (235, 240, 225)
 CANNON_COLOR = (55, 55, 60)
 ACTIVE_RING_COLOR = (255, 215, 0)
 AIM_COLOR = (230, 110, 20)
@@ -53,7 +52,7 @@ HARD_HAT = (240, 200, 40)
 HOOD = (60, 130, 60)
 DEFEATED_COLOR = (120, 120, 120)
 DEFEND_COLOR = (90, 170, 255)
-GUARD_COLOR = (30, 110, 235)       # Castle Guard: outline on the blocks and the GUARDED badge
+GUARD_COLOR = (30, 110, 235)       # Cover Guard: outline on the blocks and the GUARDED badge
 COOLDOWN_COLOR = (255, 225, 120)  # these two are drawn on the green ground strip
 READY_COLOR = (235, 240, 235)
 BUTTON_COLOR = (70, 95, 130)
@@ -84,14 +83,14 @@ def draw_text(screen, text, font, color, **position):
 
 
 def guard_badge_rect(side):
-    """Where the GUARDED badge of `side`'s castle is drawn: in the empty space above the
-    castle's low wall (its back three columns), clear of the characters and their HP bars,
-    the cannon and the HUD. The two sides are mirror images."""
-    center_x = CASTLE_X["left"] + BLOCK_SIZE * 3 // 2               # 248
+    """Where the GUARDED badge of `side`'s cover is drawn: just above the higher cover row,
+    centred over the four slot columns, clear of the characters and their HP bars, the
+    cannon and the HUD. The two sides are mirror images."""
+    center_x = COLUMN_X["left"][0] + 2 * BLOCK_SIZE                 # 236: the middle of the columns
     if side == "right":
-        center_x = WINDOW_WIDTH - center_x                          # 1032
+        center_x = WINDOW_WIDTH - center_x                          # 1044
     badge = pygame.Rect(0, 0, 84, 20)
-    badge.center = (center_x, GROUND_Y - BLOCK_SIZE - BLOCK_SIZE // 2)   # y 512: above the low wall
+    badge.center = (center_x, GROUND_Y - 2 * BLOCK_SIZE - 20)       # y 476: above the raised row
     return badge
 
 
@@ -120,11 +119,13 @@ def describe_event(event):
         lines = []
         if event["blocks_hit"]:
             plural = "s" if event["blocks_hit"] != 1 else ""
-            lines.append(f"Explosion: {event['blocks_hit']} castle block{plural}, "
+            lines.append(f"Explosion: {event['blocks_hit']} cover block{plural}, "
                          f"{event['damage']} damage.")
             if event.get("guarded"):
-                lines.append("Castle Guard halved the damage to the castle.")
+                lines.append("Cover Guard halved the damage to the blocks.")
         target_side = other_side(event["side"]).upper()
+        for name in event["covered"]:
+            lines.append(f"{target_side} {name} was shielded by cover.")
         for hit in event["characters_hit"]:
             ending = " and is defeated!" if hit["defeated"] else "."
             lines.append(f"{target_side} {hit['name']} takes {hit['damage']} damage{ending}")
@@ -141,10 +142,8 @@ def describe_event(event):
         return [f"Not allowed: {event['reason']}."]
     if kind == "game_over":
         lines = []
-        if event.get("reason") == "tie_break":
-            lines.append("Round limit reached: tie-break.")
-        elif event.get("reason") == "draw":
-            lines.append("Round limit reached: every tie-breaker is equal.")
+        if event["reason"] == "timeout":
+            lines.append("Round limit reached: no team was eliminated.")
         if event["winner"] == "draw":
             return lines + ["It's a draw!"]
         return lines + [f"{event['winner'].upper()} wins!"]
@@ -209,7 +208,7 @@ class TeamSelection:
     """The choices made on the team-selection screen. (No drawing happens here.)
 
     Each team picks `team_size` different roles. The order of the picks is the
-    slot order: the first pick stands nearest the team's castle. Against the
+    slot order: the first pick stands at the front, behind the team's cover. Against the
     computer (vs_ai) only the LEFT team is picked here; the AI builds its own.
     """
 
@@ -295,7 +294,6 @@ class Game:
             for i, role in enumerate(ARCHETYPES):
                 self.card_rects[(side, role)] = pygame.Rect(first_x + i * 190, 210, 170, 265)
         self.start_button = Button(515, 515, 250, 56, "START BATTLE")
-        self.duel_button = Button(20, 660, 300, 40, "Classic cannon duel (M1)")
         # Battle screen.
         self.action_buttons = {
             "attack": Button(450, PANEL_TOP + 12, 120, 42, "ATTACK"),
@@ -309,20 +307,16 @@ class Game:
     # ----- starting matches ------------------------------------------------------
 
     def start_battle(self, roster, ai=None):
-        """Start a match. `roster` is None for the classic cannon duel; `ai` is the
-        AIController playing RIGHT, or None if two people play."""
+        """Start a match. `ai` is the AIController playing RIGHT, or None if two people play."""
         self.battle = Battle(roster=roster)
         self.ai = ai
         self.begin_match()
 
     def rematch(self):
-        """Play again with the same teams (the Rematch button or R). In team matches the
-        side that moves first swaps every time: LEFT, then RIGHT, then LEFT... A new choice
-        of teams starts with LEFT again. The M1 duel always starts with LEFT."""
-        first_side = self.battle.first_side
-        if self.battle.teams is not None:
-            first_side = other_side(first_side)
-        self.battle.reset(first_side=first_side)
+        """Play again with the same teams and cover (the Rematch button or R). The side that
+        moves first swaps every time: LEFT, then RIGHT, then LEFT... A new choice of teams
+        starts with LEFT again."""
+        self.battle.reset(first_side=other_side(self.battle.first_side))
         if self.ai is not None:
             self.ai.new_match()
         self.begin_match()
@@ -332,13 +326,9 @@ class Game:
         self.selected = {"left": 0, "right": 0}
         self.ai_wait = 0
         self.explosions = []
-        if self.battle.teams is None:
-            self.log = []
-            self.message = "LEFT cannon: aim, then press SPACE to fire."
-        else:
-            first = f"{self.battle.first_side.upper()} team moves first."
-            self.log = ["--- Round 1 ---", first]
-            self.message = first + " Choose a character, aim, then choose an action."
+        first = f"{self.battle.first_side.upper()} team moves first."
+        self.log = ["--- Round 1 ---", first]
+        self.message = first + " Choose a character, aim, then choose an action."
         self.refresh_buttons()
 
     def try_start(self):
@@ -372,7 +362,7 @@ class Game:
         return self.selected[side]
 
     def selected_character(self):
-        if self.battle is None or self.battle.teams is None:
+        if self.battle is None:
             return None
         return self.battle.teams[self.battle.active_side].characters[self.selected_index()]
 
@@ -390,10 +380,6 @@ class Game:
 
     def do_action(self, action):
         """Ask the Battle to carry out an action for the chosen character."""
-        if self.battle.teams is None:            # classic duel: only firing exists
-            if action == "attack":
-                self.battle.fire()
-            return
         index = self.selected_index()
         reason = self.battle.why_not_allowed(index, action)
         if reason is not None:
@@ -437,7 +423,7 @@ class Game:
             cannon.adjust_power(step)
         elif key == pygame.K_LEFT:
             cannon.adjust_power(-step)
-        elif key in (pygame.K_1, pygame.K_2, pygame.K_3) and self.battle.teams is not None:
+        elif key in (pygame.K_1, pygame.K_2, pygame.K_3):
             self.select_actor(key - pygame.K_1)
         elif key == pygame.K_SPACE and self.space_released:
             # Holding SPACE produces repeated key presses (key repeat is on for the
@@ -480,12 +466,8 @@ class Game:
                     self.message = refusal
         if self.start_button.rect.collidepoint(pos):
             self.try_start()                       # explains what is missing if incomplete
-        elif self.duel_button.is_clicked(pos):
-            self.start_battle(None)
 
     def click_battle(self, pos):
-        if self.battle.teams is None:
-            return                                 # the classic duel uses only the keyboard
         if self.is_ai_turn():
             self.message = "The computer is playing the RIGHT team's turn."
             return
@@ -515,7 +497,7 @@ class Game:
         for size, button in enumerate(self.size_buttons, start=1):
             button.chosen = (size == self.selection.team_size)
         self.start_button.enabled = self.selection.is_complete()
-        if self.battle is not None and self.battle.teams is not None:
+        if self.battle is not None:
             index = self.selected_index()
             for action, button in self.action_buttons.items():
                 button.enabled = (self.state == "battle" and not self.is_ai_turn()
@@ -610,28 +592,19 @@ class Game:
     def result_title(self):
         if self.battle.winner == "draw":
             return "DRAW!"
-        if self.battle.teams is None:
-            return f"{self.battle.winner.upper()} WINS!"
         return f"{self.battle.winner.upper()} TEAM WINS!"
 
     def result_reason(self):
         """One line: why the match ended (from Battle.end_reason)."""
         reason = self.battle.end_reason
-        if reason == "tie_break":
-            return f"Round limit: {self.battle.tie_break_rule}."
-        if reason == "draw":
-            return "Round limit: every tie-breaker was equal."
+        if reason == "timeout":
+            return f"Round limit: {ROUND_LIMIT} rounds and no team was eliminated."
         if reason == "both_lost":
-            return "Both sides lost at the same time."
+            return "Both teams were defeated at the same time."
         loser = other_side(self.battle.winner).upper()
-        if reason == "elimination":
-            return f"Every {loser} character was defeated."
-        return f"The {loser} castle reached 60% destruction."
+        return f"Every {loser} character was defeated."
 
     def result_rounds(self):
-        """'Rounds played: N' for team matches; "" for the M1 duel (its result screen is unchanged)."""
-        if self.battle.teams is None:
-            return ""
         return f"Rounds played: {self.battle.round_number}"
 
     # ----- drawing: team selection ---------------------------------------------------------
@@ -671,10 +644,12 @@ class Game:
             self.draw_card(side, role, rect)
         draw_text(self.screen, self.message, self.small_font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 495))
         self.start_button.draw(self.screen, self.font)
-        draw_text(self.screen, "Slot 1 stands nearest the castle. Both teams have the same size. "
+        draw_text(self.screen, "Slot 1 stands at the front, behind the cover. Both teams have the same size. "
                   "Enter = start, Esc = quit.", self.small_font, TEXT_COLOR,
                   center=(WINDOW_WIDTH // 2, 600))
-        self.duel_button.draw(self.screen, self.small_font)
+        draw_text(self.screen, "Win by defeating every enemy character. Cover blocks only protect: "
+                  "destroying them does not win.", self.small_font, TEXT_COLOR,
+                  center=(WINDOW_WIDTH // 2, 630))
 
     def draw_card(self, side, role, rect):
         """One character card on the selection screen, with its stats."""
@@ -688,7 +663,7 @@ class Game:
         draw_text(self.screen, role.__name__, self.font, TEXT_COLOR, center=(rect.centerx, rect.top + 20))
         draw_figure(self.screen, role, rect.centerx, rect.top + 38, direction(side), TEAM_COLORS[side])
         lines = [f"HP {role.BASE_HP}  ATK {role.BASE_ATK}  DEF {role.BASE_DEF}",
-                 f"Castle damage: {role.BLOCK_DAMAGE}",
+                 f"Block damage: {role.BLOCK_DAMAGE}",
                  f"Special: {role.SPECIAL_NAME}",
                  f"Cooldown: {role.SPECIAL_COOLDOWN} rounds",
                  role.SPECIAL_DESCRIPTION]
@@ -716,8 +691,7 @@ class Game:
             # Asked from the Battle on every frame, so it can never be out of date.
             if self.battle.castle_guarded(side):
                 self.draw_castle_guard(side, castle)
-        if self.battle.teams is not None:
-            self.draw_characters()
+        self.draw_characters()
         for side, cannon in self.battle.cannons.items():
             self.draw_cannon(cannon, is_active=(side == self.battle.active_side))
         if self.battle.can_fire():
@@ -734,7 +708,7 @@ class Game:
                                0 if progress < 0.5 else 4)
 
     def draw_castle_guard(self, side, castle):
-        """Castle Guard is on: a blue outline on every standing block, and a GUARDED badge."""
+        """Cover Guard is on: a blue outline on every standing block, and a GUARDED badge."""
         for block in castle.alive_blocks():
             pygame.draw.rect(self.screen, GUARD_COLOR, (block.x, block.y, block.size, block.size), 3)
         badge = guard_badge_rect(side)
@@ -785,7 +759,8 @@ class Game:
                                          (rect.centerx, tip_y)])
 
     def draw_cannon(self, cannon, is_active):
-        # The barrel points along the cannon's angle, toward the enemy.
+        # A wheel on the ground under the pivot; the barrel points along the cannon's angle.
+        pygame.draw.circle(self.screen, WOOD, (cannon.x, GROUND_Y - 8), 8)
         radians = math.radians(cannon.angle)
         tip = (cannon.x + direction(cannon.side) * 24 * math.cos(radians),
                cannon.y - 24 * math.sin(radians))       # minus: up is smaller y
@@ -807,23 +782,18 @@ class Game:
             wing = (end[0] + 12 * math.cos(back + offset), end[1] + 12 * math.sin(back + offset))
             pygame.draw.line(self.screen, AIM_COLOR, end, wing, 3)
 
+    def hud_team_line(self, side):
+        """'LEFT  2/3 standing   cover 5/6': living characters, and standing / placed blocks."""
+        team, castle = self.battle.teams[side], self.battle.castles[side]
+        return (f"{side.upper()}  {len(team.alive_characters())}/{len(team.characters)} standing"
+                f"   cover {len(castle.alive_blocks())}/{len(castle.blocks)}")
+
     def draw_hud(self):
         for side, position in (("left", {"topleft": (20, 15)}),
                                ("right", {"topright": (WINDOW_WIDTH - 20, 15)})):
-            percent = int(self.battle.castles[side].destruction_percent())  # whole percent, rounded down
-            draw_text(self.screen, f"{side.upper()} CASTLE  {percent}% destroyed",
-                      self.font, TEXT_COLOR, **position)
+            draw_text(self.screen, self.hud_team_line(side), self.font, TEXT_COLOR, **position)
         side = self.battle.active_side
-        if self.battle.teams is None:                  # the classic duel's status line
-            cannon = self.battle.cannons[side]
-            if self.battle.is_over():
-                status = "Game over"
-            elif self.battle.projectile is not None:
-                status = "Shot in flight..."
-            else:
-                status = f"Turn: {side.upper()}    Angle {cannon.angle}°    Power {cannon.power}"
-            draw_text(self.screen, status, self.font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 27))
-        elif self.battle.is_over():
+        if self.battle.is_over():
             draw_text(self.screen, f"Round {self.battle.round_number} / {ROUND_LIMIT}   -   GAME OVER",
                       self.font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 27))
         else:
@@ -837,14 +807,6 @@ class Game:
 
     def draw_panel(self):
         pygame.draw.rect(self.screen, PANEL_COLOR, (0, PANEL_TOP, WINDOW_WIDTH, WINDOW_HEIGHT - PANEL_TOP))
-        if self.battle.teams is None:
-            lines = [("UP / DOWN: angle     LEFT / RIGHT: power     SHIFT: change by 5     "
-                      "SPACE: fire     R: restart     ESC: quit"),
-                     "Players take turns. A castle that reaches 60% destruction loses."]
-            for i, line in enumerate(lines):
-                draw_text(self.screen, line, self.small_font, HINT_COLOR,
-                          center=(WINDOW_WIDTH // 2, PANEL_TOP + 45 + i * 30))
-            return
         # Left: the character chosen to act.
         for i, line in enumerate(self.selected_info_lines()):
             color = TEAM_COLORS[self.battle.active_side] if i == 0 else LIGHT_TEXT
@@ -860,7 +822,7 @@ class Game:
                 draw_text(self.screen, part, self.tiny_font, LIGHT_TEXT, topleft=(450, y))
                 y += 18
         # Right: the combat log.
-        draw_text(self.screen, "Combat log   (R: restart, Esc: quit)", self.tiny_font, DIM_TEXT,
+        draw_text(self.screen, "Combat log   (R: rematch, Esc: quit)", self.tiny_font, DIM_TEXT,
                   topleft=(860, PANEL_TOP + 8))
         for i, line in enumerate(self.log[-LOG_LINES:]):
             draw_text(self.screen, line, self.tiny_font, LIGHT_TEXT, topleft=(860, PANEL_TOP + 28 + i * 19))

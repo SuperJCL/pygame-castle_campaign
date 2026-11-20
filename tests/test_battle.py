@@ -1,34 +1,41 @@
-"""Unit tests for battle.py (Projectile, Cannon, Battle).
+"""Unit tests for battle.py: Projectile, Cannon, collision along the flight path, and
+the flight of shots on the M3.4 battlefield.
 
 Run from the project root:  python -m unittest discover tests
-Expected numbers are worked out by hand or come from an independent simulation
-script written during M0 (docs/M0_design.md §14), not from battle.py itself.
+Expected numbers are worked out by hand, or come from an independent simulation
+script (its own physics and its own collision check, sampling each step's path
+finely), not from battle.py itself. Team combat rules are in test_combat.py.
 """
-import math
 import os
 import subprocess
 import sys
 import unittest
 
-from battle import (Battle, Cannon, Projectile, CANNON_PIVOT, DT, GRAVITY,
-                    MAX_POWER, MAX_STEPS, SPEED_PER_POWER)
-from castle import GROUND_Y
+from battle import (Battle, Cannon, Projectile, MAX_STEPS, segment_entry)
+from castle import DEFAULT_LAYOUT, GROUND_Y, slot_position
+from characters import Archer, Engineer, Knight
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TRIO = [Knight, Archer, Engineer]
+OPEN = {"left": (), "right": ()}            # no cover blocks at all
+
+
+def team_battle(layouts=None, roster=TRIO):
+    """3 v 3 with the same roles on both sides; the default cover unless `layouts` is given."""
+    return Battle(roster={"left": list(roster), "right": list(roster)}, layouts=layouts)
 
 
 def play_shot(battle, angle, power):
-    """Aim the active cannon, fire, and fly until the shot ends.
-
-    Returns the list of events produced by this shot. Uses only the public
-    methods a player's key presses would use.
-    """
+    """Aim the active cannon, Attack with the first living character, and fly until the
+    shot ends. Returns the events produced by this shot."""
     cannon = battle.cannons[battle.active_side]
     cannon.adjust_angle(angle - cannon.angle)
     cannon.adjust_power(power - cannon.power)
     battle.take_events()                       # throw away older events
-    if not battle.fire():
-        raise AssertionError("the active cannon refused to fire")
+    team = battle.teams[battle.active_side]
+    index = next(i for i, c in enumerate(team.characters) if c.is_alive())
+    if not battle.perform_action(index, "attack"):
+        raise AssertionError("the attack was refused")
     for _ in range(MAX_STEPS + 1):
         if battle.projectile is None:
             break
@@ -98,7 +105,7 @@ class CannonTest(unittest.TestCase):
 
     def test_fire_launches_from_the_pivot_with_the_current_aim(self):
         # Power 40 -> 280 px/s. At 30 deg: vx = 280 cos 30 = 242.487, vy = -280 sin 30 = -140.
-        for side, pivot, vx in (("left", (360, 390), 242.487), ("right", (920, 390), -242.487)):
+        for side, pivot, vx in (("left", (340, 544), 242.487), ("right", (940, 544), -242.487)):
             with self.subTest(side=side):
                 cannon = Cannon(side)
                 cannon.adjust_angle(30 - cannon.angle)
@@ -108,85 +115,96 @@ class CannonTest(unittest.TestCase):
                 self.assertAlmostEqual(shot.vx, vx, places=3)
                 self.assertAlmostEqual(shot.vy, -140.0, places=3)
 
+    def test_each_cannon_stands_on_the_ground_in_front_of_its_cover(self):
+        battle = team_battle()
+        for side, ahead in (("left", 1), ("right", -1)):
+            with self.subTest(side=side):
+                cannon = battle.cannons[side]
+                self.assertTrue(GROUND_Y - 20 <= cannon.y < GROUND_Y)       # near the ground
+                for slot in range(8):                                       # past every cover slot ...
+                    x, _ = slot_position(side, slot)
+                    nearest_edge = x + 32 if side == "left" else x
+                    self.assertGreater((cannon.x - nearest_edge) * ahead, 14)
+                for index in range(3):                                      # ... and every character
+                    left, _, width, _ = battle.teams[side].character_rect(index)
+                    self.assertGreater((cannon.x - (left + width / 2)) * ahead, 150)
+
+
+class SegmentEntryTest(unittest.TestCase):
+    """segment_entry(): where a straight move first touches a rectangle (0 = start, 1 = end)."""
+
+    def test_a_move_straight_through_a_rectangle(self):
+        self.assertAlmostEqual(segment_entry(0, 10, 100, 10, (40, 0, 20, 20)), 0.4)
+
+    def test_a_move_that_passes_beside_or_stops_short_misses(self):
+        self.assertIsNone(segment_entry(0, -5, 100, -5, (40, 0, 20, 20)))     # above it
+        self.assertIsNone(segment_entry(0, 10, 39, 10, (40, 0, 20, 20)))      # stops short
+        self.assertIsNone(segment_entry(50, 30, 50, 60, (40, 0, 20, 20)))     # straight down, below it
+
+    def test_a_step_longer_than_the_target_is_still_caught(self):
+        # Both ends are outside the 20 px rectangle, so checking only where each step ends
+        # would miss it. The move enters through the left side at x = 40 (y = 17).
+        self.assertAlmostEqual(segment_entry(30, 14, 70, 26, (40, 0, 20, 20)), 0.25)
+
+    def test_vertical_and_corner_moves(self):
+        self.assertAlmostEqual(segment_entry(50, -10, 50, 30, (40, 0, 20, 20)), 0.25)
+        self.assertAlmostEqual(segment_entry(30, -10, 50, 10, (40, 0, 20, 20)), 0.5)   # through the corner
+
 
 class ShotTest(unittest.TestCase):
-    def test_default_shot_lands_short_of_the_enemy_castle(self):
-        battle = Battle()
-        cannon = battle.cannons["left"]
-        events = play_shot(battle, cannon.angle, cannon.power)   # default aim
-        explosion = only_event(events, "explosion")
-        self.assertEqual(explosion["kind"], "ground")
-        self.assertTrue(770 <= explosion["x"] <= 800, explosion)  # about 785
-        self.assertEqual(explosion["blocks_hit"], 0)
-        self.assertEqual(battle.castles["right"].total_hp(), 1500)
+    def test_the_default_aim_lands_in_the_middle_of_the_field(self):
+        battle = team_battle()
+        explosion = only_event(play_shot(battle, 45, 50), "explosion")
+        self.assertEqual((explosion["kind"], explosion["y"]), ("ground", GROUND_Y))
+        self.assertTrue(650 <= explosion["x"] <= 665, explosion)          # independent sim: 657.6
+        self.assertEqual((explosion["blocks_hit"], explosion["characters_hit"]), (0, []))
 
-    def test_shot_into_the_tower_damages_the_blocks_around_the_impact(self):
-        # Independent simulation: 45 deg, power 64 hits the tower near (893, 429).
-        # Block centres within 50 px of that point: (904,416), (936,416), (904,448), (936,448).
-        # 4 blocks x 50 damage = 200.
-        battle = Battle()
-        explosion = only_event(play_shot(battle, 45, 64), "explosion")
+    def test_a_shot_explodes_where_it_first_touches_a_block(self):
+        # Independent sim: 45 deg, power 76 comes down on the top of the right slot-2 block
+        # at about (1024.8, 528). Block centres within 50 px: slots 1, 2, 3 and 5.
+        battle = team_battle()
+        explosion = only_event(play_shot(battle, 45, 76), "explosion")
         self.assertEqual(explosion["kind"], "block")
-        self.assertTrue(885 <= explosion["x"] <= 900 and 420 <= explosion["y"] <= 440, explosion)
+        self.assertAlmostEqual(explosion["y"], 528, places=6)             # on the surface, not inside
+        self.assertTrue(1020 <= explosion["x"] <= 1030, explosion)
         self.assertEqual((explosion["blocks_hit"], explosion["damage"]), (4, 200))
-        self.assertEqual(battle.castles["right"].total_hp(), 1500 - 200)
-        self.assertEqual(battle.castles["left"].total_hp(), 1500)
+        damaged = sorted(slot for slot, block in zip(DEFAULT_LAYOUT, battle.castles["right"].blocks)
+                         if block.hp < 100)
+        self.assertEqual(damaged, [1, 2, 3, 5])
 
-    def test_two_direct_hits_destroy_the_blocks_they_cover(self):
-        # Each 45/64 shot hits the same 4 tower blocks for 50: 100 -> 50 -> 0 HP.
-        battle = Battle()
-        play_shot(battle, 45, 64)                 # left: the 4 blocks drop to 50 HP
-        play_shot(battle, 80, 10)                 # right: lands on its own castle, harmless
-        play_shot(battle, 45, 64)                 # left again: the 4 blocks are destroyed
-        castle = battle.castles["right"]
-        alive = {(b.x, b.y) for b in castle.alive_blocks()}
-        for gone in ((888, 400), (920, 400), (888, 432), (920, 432)):
-            self.assertNotIn(gone, alive)
-        self.assertEqual(len(alive), 11)
-        self.assertAlmostEqual(castle.destruction_percent(), 400 / 1500 * 100)
+    def test_a_shot_explodes_on_the_surface_of_a_character(self):
+        # Independent sim: 45 deg, power 81 reaches the front of the right slot-0 character.
+        battle = team_battle(OPEN)
+        explosion = only_event(play_shot(battle, 45, 81), "explosion")
+        self.assertEqual((explosion["kind"], explosion["target"]), ("character", "Knight"))
+        self.assertAlmostEqual(explosion["x"], 1126, places=6)            # the character's front edge
+        self.assertTrue(516 <= explosion["y"] <= 560, explosion)
 
-    def test_ground_explosion_next_to_the_castle_damages_the_front_block(self):
-        # Power 56 lands on the ground at x ~ 868: 39 px from the front block's centre (904, 544).
-        battle = Battle()
-        explosion = only_event(play_shot(battle, 45, 56), "explosion")
-        self.assertEqual(explosion["kind"], "ground")
-        self.assertEqual(explosion["y"], GROUND_Y)
-        self.assertEqual((explosion["blocks_hit"], explosion["damage"]), (1, 50))
-        damaged = [(b.x, b.y) for b in battle.castles["right"].blocks if b.hp < 100]
-        self.assertEqual(damaged, [(888, 528)])
+    def test_a_destroyed_block_no_longer_stops_shots(self):
+        battle = team_battle()
+        block = battle.castles["right"].block_at(1024, 530)              # the slot-2 block 45/76 hits
+        block.take_damage(100)
+        explosion = only_event(play_shot(battle, 45, 76), "explosion")
+        self.assertFalse(block.contains(explosion["x"], explosion["y"]))
+        self.assertEqual(explosion["kind"], "block")
+        self.assertAlmostEqual(explosion["x"], 1044, places=6)            # it flew on, to the next block
 
-    def test_ground_explosion_just_out_of_range_damages_nothing(self):
-        # Power 55 lands at x ~ 855: 52 px from the nearest block centre.
-        battle = Battle()
-        explosion = only_event(play_shot(battle, 45, 55), "explosion")
-        self.assertEqual(explosion["blocks_hit"], 0)
-        self.assertEqual(battle.castles["right"].total_hp(), 1500)
-
-    def test_shot_passes_through_its_own_castle_without_damaging_it(self):
-        # 80 deg, power 10 goes almost straight up and falls back through the
-        # left castle's own tower, landing at x ~ 373.6 inside the castle's footprint.
-        battle = Battle()
+    def test_a_shot_never_hits_its_own_side(self):
+        # 80 deg, power 10 goes almost straight up and comes down beside the own cannon.
+        battle = team_battle()
         explosion = only_event(play_shot(battle, 80, 10), "explosion")
         self.assertEqual(explosion["kind"], "ground")
-        self.assertTrue(365 <= explosion["x"] <= 382, explosion)
-        self.assertEqual(battle.castles["left"].total_hp(), 1500)
-        self.assertEqual(battle.castles["right"].total_hp(), 1500)
+        self.assertTrue(340 <= explosion["x"] <= 352, explosion)          # independent sim: 346.0
+        self.assertEqual((explosion["blocks_hit"], explosion["characters_hit"]), (0, []))
+        for side in ("left", "right"):
+            self.assertEqual(battle.castles[side].total_hp(), 600)
 
-    def test_destroyed_block_no_longer_stops_shots(self):
-        battle = Battle()
-        block = battle.castles["right"].block_at(893, 429)   # the block the 45/64 shot hits
-        block.take_damage(100)
-        explosion = only_event(play_shot(battle, 45, 64), "explosion")
-        self.assertFalse(block.contains(explosion["x"], explosion["y"]))
-        self.assertGreaterEqual(explosion["y"], 432)          # it flew on, into the block below
-
-    def test_shot_that_leaves_the_screen_is_a_miss(self):
-        battle = Battle()
-        events = play_shot(battle, 45, 100)                   # would land near x = 1284
+    def test_a_shot_that_leaves_the_screen_is_a_miss(self):
+        battle = team_battle()
+        events = play_shot(battle, 45, 100)                               # passes high over everyone
         miss = only_event(events, "miss")
         self.assertEqual(miss["reason"], "offscreen")
         self.assertFalse([e for e in events if e["type"] == "explosion"])
-        self.assertEqual(battle.castles["right"].total_hp(), 1500)
 
     def test_every_legal_shot_ends_before_the_timeout(self):
         # The step limit always ends a shot, so the real check is that no legal
@@ -194,38 +212,31 @@ class ShotTest(unittest.TestCase):
         for angle in range(5, 81, 5):
             for power in range(10, 101, 10):
                 with self.subTest(angle=angle, power=power):
-                    result = shot_result(play_shot(Battle(), angle, power))
+                    result = shot_result(play_shot(team_battle(), angle, power))
                     self.assertNotEqual(result.get("reason"), "timeout")
 
     def test_left_and_right_shots_are_mirror_images(self):
-        for angle, power in ((45, 50), (45, 64), (30, 60), (70, 85), (80, 10), (45, 100)):
-            with self.subTest(angle=angle, power=power):
-                battle = Battle()
-                left = shot_result(play_shot(battle, angle, power))    # left's turn
-                right = shot_result(play_shot(battle, angle, power))   # then right's
-                self.assertEqual(left["type"], right["type"])
-                self.assertEqual(left.get("blocks_hit"), right.get("blocks_hit"))
-                self.assertAlmostEqual(right["x"], 1280 - left["x"], places=6)
-                self.assertAlmostEqual(right["y"], left["y"], places=6)
+        for layouts in (None, OPEN, {"left": (0, 4, 2), "right": (0, 4, 2)}):
+            for angle, power in ((45, 50), (45, 76), (45, 81), (60, 88), (80, 10), (45, 100)):
+                with self.subTest(layouts=layouts, angle=angle, power=power):
+                    battle = team_battle(layouts)
+                    left = shot_result(play_shot(battle, angle, power))     # left's turn
+                    right = shot_result(play_shot(battle, angle, power))    # then right's
+                    self.assertEqual(left["type"], right["type"])
+                    self.assertAlmostEqual(right["x"], 1280 - left["x"], places=6)
+                    self.assertAlmostEqual(right["y"], left["y"], places=6)
+                    for key in ("kind", "target", "blocks_hit", "damage", "characters_hit", "covered"):
+                        self.assertEqual(left.get(key), right.get(key), key)
 
     def test_same_shot_always_gives_the_same_result(self):
-        first = shot_result(play_shot(Battle(), 30, 60))
-        second = shot_result(play_shot(Battle(), 30, 60))
+        first = shot_result(play_shot(team_battle(), 60, 88))
+        second = shot_result(play_shot(team_battle(), 60, 88))
         self.assertEqual(first, second)
-
-    def test_fastest_shot_cannot_jump_over_a_target(self):
-        # Energy conservation: the fastest a shot can ever move is at ground level
-        # with maximum power. Its move per step must stay below the smallest
-        # target (28 px: the character width planned for M2; blocks are 32 px).
-        launch_speed = SPEED_PER_POWER * MAX_POWER
-        drop = GROUND_Y - min(y for _, y in CANNON_PIVOT.values())
-        fastest = math.sqrt(launch_speed ** 2 + 2 * GRAVITY * drop)
-        self.assertLess(fastest * DT, 28)
 
 
 class TurnTest(unittest.TestCase):
     def test_turns_alternate_left_right_left(self):
-        battle = Battle()
+        battle = team_battle()
         self.assertEqual(battle.active_side, "left")
         events = play_shot(battle, 45, 50)
         self.assertEqual(only_event(events, "turn")["side"], "right")
@@ -234,123 +245,77 @@ class TurnTest(unittest.TestCase):
         self.assertEqual(battle.active_side, "left")
 
     def test_turn_also_passes_after_a_miss(self):
-        battle = Battle()
+        battle = team_battle()
         play_shot(battle, 45, 100)                            # off the screen
         self.assertEqual(battle.active_side, "right")
 
-    def test_cannot_fire_again_while_a_shot_is_flying(self):
-        battle = Battle()
-        self.assertTrue(battle.fire())
-        first_shot = battle.projectile
-        self.assertFalse(battle.fire())
-        self.assertIs(battle.projectile, first_shot)
-        self.assertEqual(battle.active_side, "left")
-
     def test_each_side_keeps_its_own_aim(self):
-        battle = Battle()
+        battle = team_battle()
         play_shot(battle, 30, 40)                             # left aims and fires
         self.assertEqual((battle.cannons["right"].angle, battle.cannons["right"].power), (45, 50))
         play_shot(battle, 60, 70)                             # right aims and fires
         self.assertEqual((battle.cannons["left"].angle, battle.cannons["left"].power), (30, 40))
 
 
-class VictoryTest(unittest.TestCase):
-    def test_left_wins_when_the_right_castle_reaches_60_percent(self):
-        battle = Battle()
-        for block in battle.castles["right"].blocks:
-            block.take_damage(58)                 # 870 damage = 58 %, no block destroyed
-        events = play_shot(battle, 45, 64)        # 4 blocks x 42 HP left = +168 -> 1038 = 69 %
-        self.assertEqual(only_event(events, "game_over")["winner"], "left")
-        self.assertEqual(battle.winner, "left")
-        self.assertTrue(battle.is_over())
-        self.assertFalse(battle.fire())           # nobody can shoot after the game ends
-        self.assertEqual(battle.active_side, "left")
-        self.assertFalse([e for e in events if e["type"] == "turn"])
-
-    def test_game_continues_below_60_percent(self):
-        battle = Battle()
-        for block in battle.castles["right"].blocks:
-            block.take_damage(40)                 # 600 damage = 40 %
-        events = play_shot(battle, 45, 64)        # 4 blocks x 50 = +200 -> 800 = 53 %
-        self.assertIsNone(battle.winner)
-        self.assertFalse([e for e in events if e["type"] == "game_over"])
-        self.assertEqual(battle.active_side, "right")
-
-    def test_right_wins_when_the_left_castle_falls(self):
-        battle = Battle()
-        for block in battle.castles["left"].blocks[:9]:
-            block.take_damage(100)                # 900 damage = 60 %
-        self.assertEqual(battle.check_winner(), "right")
-
-    def test_draw_when_both_castles_fall_together(self):
-        # A single M1 shot only damages one castle, so this can't happen in play yet,
-        # but the rule (both lose = draw) must hold for later milestones.
-        battle = Battle()
-        for side in ("left", "right"):
-            for block in battle.castles[side].blocks[:9]:
-                block.take_damage(100)
-        self.assertEqual(battle.check_winner(), "draw")
-        self.assertTrue(battle.is_over())
-
-
 class RestartTest(unittest.TestCase):
-    def test_reset_starts_a_fresh_match(self):
-        battle = Battle()
+    def test_reset_starts_a_fresh_match_with_the_same_cover(self):
+        layouts = {"left": (0, 1, 4), "right": (2, 3, 6, 7)}
+        battle = team_battle(layouts)
         for block in battle.castles["right"].blocks:
-            block.take_damage(58)
-        play_shot(battle, 45, 64)                 # left wins
+            block.take_damage(100)                            # all right cover destroyed
+        battle.teams["right"].characters[0].take_damage(50)
+        play_shot(battle, 30, 40)
         battle.cannons["right"].adjust_angle(10)
-        self.assertTrue(battle.is_over())
 
         battle.reset()
 
-        fresh = Battle()
         self.assertIsNone(battle.winner)
-        self.assertFalse(battle.is_over())
         self.assertIsNone(battle.projectile)
         self.assertEqual(battle.active_side, "left")
         self.assertEqual(battle.take_events(), [])
         for side in ("left", "right"):
-            self.assertEqual(battle.castles[side].total_hp(), 1500)
-            self.assertEqual(battle.cannons[side].angle, fresh.cannons[side].angle)
-            self.assertEqual(battle.cannons[side].power, fresh.cannons[side].power)
-        self.assertTrue(battle.fire())
+            castle = battle.castles[side]
+            self.assertEqual(castle.layout, layouts[side])     # the same cover, rebuilt
+            self.assertTrue(all(block.hp == 100 for block in castle.blocks))
+            self.assertEqual((battle.cannons[side].angle, battle.cannons[side].power), (45, 50))
+            self.assertTrue(all(c.hp == c.max_hp for c in battle.teams[side].characters))
+            self.assertIs(battle.teams[side].castle, castle)
 
     def test_reset_while_a_shot_is_flying_cancels_it(self):
-        battle = Battle()
-        battle.fire()
+        battle = team_battle()
+        battle.perform_action(0, "attack")
         for _ in range(10):
             battle.update()
         battle.reset()
         self.assertIsNone(battle.projectile)
         self.assertEqual(battle.active_side, "left")
         self.assertEqual(battle.take_events(), [])
-        battle.update()                           # nothing left to move or explode
-        self.assertEqual(battle.castles["right"].total_hp(), 1500)
-        self.assertTrue(battle.fire())
+        battle.update()                                       # nothing left to move or explode
+        self.assertEqual(battle.take_events(), [])
+        self.assertTrue(battle.perform_action(0, "attack"))
 
 
 class EventTest(unittest.TestCase):
     def test_take_events_hands_each_event_over_once(self):
-        battle = Battle()
-        battle.fire()
-        self.assertEqual(battle.take_events(), [{"type": "fire", "side": "left"}])
+        battle = team_battle()
+        battle.perform_action(0, "attack")
+        self.assertEqual([e["type"] for e in battle.take_events()], ["action", "fire"])
         self.assertEqual(battle.take_events(), [])
 
     def test_events_wait_until_they_are_taken(self):
-        battle = Battle()
-        battle.fire()
+        battle = team_battle()
+        battle.perform_action(0, "attack")
         while battle.projectile is not None:
             battle.update()
         types = [event["type"] for event in battle.take_events()]
-        self.assertEqual(types, ["fire", "explosion", "turn"])
+        self.assertEqual(types, ["action", "fire", "explosion", "turn"])
 
 
 class PygameIndependenceTest(unittest.TestCase):
     def test_logic_modules_do_not_import_pygame(self):
         # A fresh interpreter, so other tests can't have loaded pygame already.
         result = subprocess.run(
-            [sys.executable, "-c", "import sys, castle, battle; print('pygame' in sys.modules)"],
+            [sys.executable, "-c", "import sys, castle, battle, characters, ai; print('pygame' in sys.modules)"],
             cwd=PROJECT_ROOT, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "False")

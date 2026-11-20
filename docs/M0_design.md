@@ -1,10 +1,12 @@
 # Castle Siege — M0 Requirements and Architecture
 
-Status: **Revision 3 (M2.3), updated for M3.3.** This is the living design document. The game is
-implemented up to M3.3 (Player vs AI, two-player hot seat, the M3.2 balance changes and the M3.3
-round limit and match flow). Revision 3's final decisions and the M3.2 / M3.3 rule changes, just
-below, override anything older in this document. The AI that was built differs from the plan in
-§6.3; see §14, "M3.1 notes". The course-compliance checklist is `docs/M3.3_course_compliance.md`.
+Status: **Revision 3 (M2.3), updated for M3.4-A.** This is the living design document. The game is
+implemented up to M3.4-A (Player vs AI, two-player hot seat, the M3.2 balance numbers, the M3.3
+match flow, and the M3.4-A redesign: elimination-only victory and deployable cover). Revision 3's
+final decisions and the M3.2 / M3.3 / M3.4-A changes, just below, override anything older in this
+document; **where they disagree, the M3.4-A block wins.** The AI that was built differs from the
+plan in §6.3; see §14, "M3.1 notes". The course-compliance checklist is
+`docs/M3.3_course_compliance.md` (updated for M3.4-A).
 
 ### Revision 3 — final decisions (made by the PM and the user in M2.3)
 - **Alternating turns are the final design. Simultaneous turns are cancelled.** The left team
@@ -22,7 +24,8 @@ below, override anything older in this document. The AI that was built differs f
   two-player hot seat (M2.3) stays as an additional mode.
 - **Victory:** defeating every enemy character wins. A 60 % destroyed enemy castle also wins (our
   extra rule), and it can be switched off (`castle_loss_enabled=False`) if the instructor requires
-  elimination only.
+  elimination only. *Superseded in M3.4-A: only elimination wins; the castle rule and
+  `castle_loss_enabled` are gone.*
 
 ### M3.2 — rule changes (chosen with the balance benchmark; see docs/M3.2_balance_report.md)
 - **Castle Guard:** while one of a team's characters is defending (Defend or Rally), enemy shots
@@ -47,6 +50,38 @@ below, override anything older in this document. The AI that was built differs f
   It is drawn straight from `Battle.castle_guarded(side)` every frame.
 - **Result screen:** the winner or DRAW, the reason (elimination, castle, round-limit tie-break
   and its rule, or a true draw) and the rounds played. The HUD shows "Round N / 30".
+
+### M3.4-A — character elimination and deployable cover (combat foundation)
+The instructor's core requirement is that **the only normal victory is defeating every enemy
+character**. M3.4 redesigns the battlefield around it. M3.4-A builds the rules; the placement
+screen and the AI redesign are M3.4-B, the run-to-cannon animation M3.4-C.
+- **Victory:** elimination only (`Team.has_lost`, `Battle.check_winner`). No castle percentage
+  or block HP can win. A match that reaches the end of round 30 (complete rounds, as in M3.3)
+  without an elimination is a **draw** (`end_reason = "timeout"`), a custom safety rule. An
+  elimination on the last turn still wins. The M3.3 tie-breakers (§4.7) are removed: HP and cover
+  never pick a winner.
+- **Cover replaces the fixed castle:** each team places 0–6 blocks (100 HP) on 8 fixed slots
+  between its characters and its cannon (4 columns × 2 rows; a raised block needs a block under
+  it). `castle.layout_problem()` checks a layout; `Battle(roster, layouts=...)` builds each team's
+  `Castle` from its layout, and a rematch rebuilds the same layout at full HP. Until the
+  placement screen exists, both teams use `DEFAULT_LAYOUT` (slots 0–5).
+- **One shared cannon per team**, on the ground in front of the cover (pivots (340, 544) and
+  (940, 544)). The acting character's stats set the damage, as before.
+- **Collision:** each physics step checks the whole segment the shot moved along
+  (`battle.segment_entry`), so nothing is skipped; the shot explodes at the exact point where it
+  first touched an enemy block, an enemy character or the ground.
+- **Cover rule (read once at impact, before any damage):** a directly hit character takes normal
+  damage (Defend still halves it). Any other enemy character within 50 px takes normal damage
+  unless a standing block of its team lies on the straight line from the explosion to its centre;
+  then the block absorbs all of it. A block destroyed by the same explosion still shields against
+  that explosion. Blocks within 50 px take block damage once.
+- **Kept:** turns, first-mover alternation, cooldowns, Defend, Rally, Power Shot, EXP, levels,
+  physics, the stats, Castle Guard 50 % (now called **Cover Guard** on screen) and Repair 150
+  (damaged standing blocks only; unavailable when there is nothing to repair).
+- **Removed:** the M1 cannon duel (in git: M1.1 at `2ccb68c`, last present at `86b90fa`), the 60 % castle rule, the
+  round-limit tie-breakers, and the castle-rules benchmark script (the M3.2 results remain
+  reproducible at commit `86b90fa`).
+- Details, coordinates and the reasons are in §14, "M3.4-A notes". Human play-testing is pending.
 
 Revision 2's original header: *draft for project-manager review; M0 design only.*
 
@@ -449,7 +484,10 @@ each step:  vy += GRAVITY*DT ;  x += vx*DT ;  y += vy*DT ;  then check collision
   so changing `SPEED_PER_POWER` or `GRAVITY` too far fails loudly. (Idea adapted from Rebound's
   sub-stepping rule; review §3.2.)
 
-### 4.7 Round-limit tie-break (final rule, built in M3.3)
+### 4.7 Round-limit tie-break (built in M3.3, removed in M3.4-A)
+*Superseded in M3.4-A: a match that reaches the end of round 30 without an elimination is a
+draw (a timeout). There are no tie-breakers any more. The M3.3 rule below is kept as a record.*
+
 A team match ends after `ROUND_LIMIT` (30) **complete** rounds. A round is complete once both
 teams have acted, whichever side started, so a match never ends after only the first team's turn
 of round 30. Ordinary wins (elimination, castle) are checked first, after every action, so a win
@@ -719,7 +757,8 @@ of the PM's list of important requirements.
 | Character selection | `TEAM_SELECT` screen, `ARCHETYPES`, `AIController.pick_team` | M2 (AI's pick in M3.1) | test_main; test_ai (`pick_team(size)` returns `size` different roles) |
 | HP bars, action buttons, combat log, result screen | `Game.draw_*`, `Button`, `Battle.log`, `RESULT` state | M2 (basic), M4 (polish) | manual checklist; test_battle (log entries) |
 | Alternating turns (simultaneous resolution cancelled in M2.3) | `Battle._finish_turn`, `_start_round`, `_start_turn` | M2.2 | test_combat (turn order, cooldowns once per round, Defend covers exactly one enemy turn) |
-| Elimination victory, castle victory, Draw, tie-break | `Team.has_lost`, `Battle.check_winner`, `Battle.tie_break`, `castle_loss_enabled`, `ROUND_LIMIT`, §4.7 | M2, M3.3 | test_combat VictoryTest, RoundLimitTest (both sides first, every tie-breaker, exact ties, a last-turn win beats the tie-break) |
+| Elimination victory (the only victory since M3.4-A); timeout Draw | `Team.has_lost`, `Battle.check_winner`, `ROUND_LIMIT` | M2, M3.3, M3.4-A | test_combat VictoryTest (destroying every block does not win), RoundLimitTest (both sides first, a timeout is a draw even when one team is far ahead, a last-turn elimination beats the timeout) |
+| Deployable cover, collision along the path, cover rule | `castle.layout_problem`, `slot_position`, `Castle(side, layout)`, `Battle(layouts=...)`, `battle.segment_entry`, `Team.is_covered`, `Battle._end_shot` | M3.4-A | test_castle LayoutTest; test_battle SegmentEntryTest, ShotTest (mirror images); test_combat CoverTest (intact / destroyed / same-explosion cover, hits from above, every legal layout leaves every character reachable) |
 | Alternating first mover on rematch | `Battle(first_side=...)`, `Battle.reset(first_side=...)`, `Game.rematch` | M3.3 | test_combat FirstMoverTest (rounds, cooldowns, Defend / Rally with RIGHT first); test_main RematchAndFirstMoverTest (alternation, the AI moving first, PvP) |
 | Castle Guard indicator, result screen | `Game.draw_castle_guard`, `guard_badge_rect`, `Game.result_reason`, `result_rounds` | M3.3 | test_main CastleGuardIndicatorTest, ResultReasonTest |
 | Engineer Repair (capped) | `Castle.repair`, `Block.restore`, `Engineer.REPAIR_POOL` (150 since M3.2) | M2, M3.2 | test_castle (pool examples of §3.4, no revival, no overheal); test_combat and test_main (150 through the real battle and buttons) |
@@ -741,12 +780,13 @@ of the PM's list of important requirements.
 | # | Topic | Compliant? | Our design | If rejected |
 |---|---|---|---|---|
 | **C1** | Alternating turns | **Yes, since M2.3.** The teams act one after another, one character and one action per turn. (Revision 2 resolved both actions together; that was cancelled.) | — | If the course means that *every character* acts in turn, rather than one chosen character per team, that would need a change (Q3). |
-| **C2** | Elimination victory | **Partly.** Elimination is kept. We **add** the 60 % castle loss and a Draw; the course mentions only win and lose. | The castle win gives aiming a target that isn't a character. | Set `CASTLE_LOSS_ENABLED = False`. In simultaneous mode a Draw still happens if both teams are eliminated in the same round; in alternating mode only the round-30 tie-break (C7) can produce one. |
+| **C2** | Elimination victory | **Compliant since M3.4-A.** Defeating every enemy character is the only way to win; the 60 % castle loss is removed. A Draw remains possible only through the round limit (C7). | (Until M3.4-A we added a castle win; the PM removed it to meet the instructor's core requirement.) | — |
 | **C3** | Attacks can miss | **Unknown.** The course may assume every Attack deals damage. | Misses are what make artillery a skill. | Add an assist mode (for example, Easy-only aim help). Not planned. |
 | **C4** | "AI defends below 50 % HP" with a team | **Interpretation.** "HP" is ambiguous with several characters, and our defence is probabilistic: 40 / 50 / 60 % (Easy / Normal / Hard) when a character is below half HP, against 10 / 5 / 0 % otherwise (M3.1 table; the 50 / 70 / 85 % here before M3.3 was an outdated draft). | We use any living AI character below half HP as the trigger. | Set Defend chance to 100 % (one table row). |
-| **C5** | "Defend reduces damage by 50 %" | **Interpretation.** Applied after DEF, minimum 1, to the defending character. *Since M3.2,* the team's castle blocks also take half damage while it defends (Castle Guard, our addition). | — | Moving the halving before DEF is a one-line change; `CASTLE_GUARD_PERCENT = 0` turns Castle Guard off. |
-| **C6** | Characters "attack" | **Interpretation.** Characters attack *through* their team's cannon; the actor's stats set the damage. | One launch point per side (PM request). | Fire from the actor's slot instead (the Rev 1 design). Needs re-tuning. |
-| **C7** | Round limit | **Addition (built in M3.3).** The course doesn't mention one. A team match ends after 30 complete rounds with the §4.7 tie-break, which can be a Draw. The M1 duel has no limit. | It guarantees that every match ends, including AI-vs-AI test matches. | Raise `ROUND_LIMIT`. Removing it isn't recommended. |
+| **C5** | "Defend reduces damage by 50 %" | **Interpretation.** Applied after DEF, minimum 1, to the defending character. *Since M3.2,* the team's blocks also take half damage while it defends (Castle Guard, called Cover Guard since M3.4, our addition). | — | Moving the halving before DEF is a one-line change; `CASTLE_GUARD_PERCENT = 0` turns Cover Guard off. |
+| **C6** | Characters "attack" | **Interpretation.** Characters attack *through* their team's cannon; the actor's stats set the damage. Since M3.4-A the cannon stands on the ground in front of the team's cover; in M3.4-C the acting character will run to it and back (animation only). | One launch point per side (PM request) keeps aiming and the AI simple. | Fire from the actor's slot instead (the Rev 1 design). Needs re-tuning. |
+| **C7** | Round limit | **Addition (built in M3.3; changed in M3.4-A).** The course doesn't mention one. A match that reaches the end of round 30 without an elimination is a Draw (a timeout); HP and cover never decide it. | It guarantees that every match ends, including AI-vs-AI test matches. | Raise `ROUND_LIMIT`. Removing it isn't recommended. |
+| **C8** | Battlefield structures | **Addition (M3.4-A).** Each team places up to 6 cover blocks on 8 fixed slots. Blocks stop shots and shield characters from the blast; they never decide the winner. | Gives the artillery game a defensive choice while characters stay the only target that wins. | An empty layout (no blocks) plays as an open field. |
 
 ### 10.2 Design questions now decided (the PM may still override)
 - **A1 Fewer than 3 characters:** allowed (1–3, as the course says). The AI matches the player's
@@ -886,7 +926,11 @@ open (see M3). The original plan follows.
   (§4.7); the first mover alternates on rematch (this answers the first-move advantage measured in
   M3.2 over a series of matches, not within one match); the Castle Guard indicator; the result
   screen's reason and rounds; the course-compliance checklist (`docs/M3.3_course_compliance.md`).
-- **Next:** M4 (polish), only after PM review and human approval.
+- **M3.4-A (done, awaiting PM review):** elimination-only victory, timeout draw, deployable cover
+  (layout model and validation, default layout), collision along the flight path, the cover rule,
+  Cover Guard and Repair on blocks; the M1 duel and the castle benchmark removed.
+- **Next:** M3.4-B (placement screen, AI placement, cover-aware AI), only after PM approval; then
+  M3.4-C (run-to-cannon animation).
 
 **Updated in M2.3.**
 - **Required:** Player vs AI.
@@ -1433,5 +1477,73 @@ new classes, abilities or major GUI features, and no rebalancing.
 cap, so the M3.2 results still reproduce. 300 replayed matches were identical.
 
 **Not changed:** the combat rules, M3.2 balance, AI decisions, physics and the M1 duel.
+
+Human gameplay acceptance is pending.
+
+### M3.4-A notes (character elimination and deployable cover)
+**Brief (PM, M3.4):** meet the instructor's core requirement (the only normal victory is
+eliminating every enemy character); replace the fixed castles with player-deployable blocks; keep
+one shared cannon per team in front of the characters. Phase A builds and tests the combat rules
+only: no placement screen, no new AI, no animation.
+
+**Battlefield (left side; the right side is the mirror image, x' = 1280 - x):**
+- Characters: slots at x 140 (slot 1, the front), 95 and 50; 28 × 44 px, standing on the ground (y 560).
+- Cover slots: 32 px blocks in 4 columns at x 172, 204, 236 and 268, and 2 rows (bottom y 528,
+  raised y 496). Slots 0–3 are the bottom row (slot 0 next to the characters); slot 4 + c sits on
+  slot c. They end at x 300.
+- Cannon: pivot (340, 544), on the ground in front of the cover (a wheel under the pivot).
+- The GUARDED badge is drawn at (236, 476), above the raised row.
+
+**Why one shared cannon:** one launch point per side keeps aiming learnable, keeps the AI's
+search small, and matches the M0 design (C6). In M3.4-C the acting character will run to the
+cannon and back; that animation will not change the physics, because the shot always starts at
+the pivot.
+
+**Placement budget and constraints:** 0–6 blocks on 8 slots, no duplicates, a raised block only
+on a block. `layout_problem()` returns the reason a layout is illegal (or None), and `Castle`
+refuses an illegal layout. The slots are fixed, so no block can overlap a character, a cannon,
+the launch point or the HUD and buttons (tests check every slot). There are 76 legal layouts.
+
+**Projectile and cover interaction:**
+1. Each step, `segment_entry()` finds where the segment from the old position to the new one
+   first touches each standing enemy block and living enemy character. The earliest touch (blocks
+   before characters before the ground on an exact tie) is the impact, at the exact touching
+   point.
+2. At impact, before any damage: Cover Guard, the characters in the 50 px blast (a directly hit
+   character always counts) and which of them are shielded (`Team.is_covered`: a standing block of
+   their team lies on the segment from the explosion to their centre). A direct hit is never
+   shielded.
+3. Then blocks in the blast take block damage once (halved by Cover Guard), and every unshielded
+   character in the blast takes `calculate_damage` once (halved by Defend).
+4. The explosion event lists the characters hit, the shielded characters (`"covered"`) and the
+   directly hit character (`"target"`).
+
+Consequences: a block destroyed by this explosion still shields against it; a shot that lands on
+top of the block in front of a character is absorbed; a steep shot can still hit a character
+from above, so no legal layout makes a character unreachable (tested for all 76 layouts).
+Because the explosion is now at the exact surface point, one explosion can no longer reach all
+three characters of a team (the old point check exploded a few pixels inside the target).
+
+**Turns and animation states:** the turn and round rules are unchanged from M3.3 (an attack turn
+ends when its shot lands). Planned for M3.4-C, drawing only: IDLE -> RUN_TO_CANNON -> FIRE (the
+battle launches the shot) -> RETURN_TO_SLOT -> IDLE, with input locked until the turn ends.
+
+**AI target selection (M3.4-A, interim):** `ai.progress()` now counts only damage to enemy
+characters (and defeats), plus Repair valued as the share of the team's cover HP it restores.
+Shots that hit only blocks score 0, so the AI aims at characters it can reach and otherwise uses
+its fallback aim. Planning around cover and breaking cover on purpose are M3.4-B.
+
+**Intentional simplifications:** no structural collapse (a raised block stays in place if the
+block under it is destroyed); cover is all-or-nothing for a character (the block absorbs the whole
+blast); blocks do not shield other blocks; the class is still called `Castle` (one team's cover)
+and the method `castle_guarded`, to avoid renaming every file this late.
+
+**Removed:** the M1 cannon duel (its 60 % rule must not be a selectable mode; it is in git: M1.1
+at `2ccb68c`, last present at `86b90fa`), `castle_loss_enabled`, the castle template, `has_fallen`, `destruction_percent`,
+`hp_before_falling`, `Battle.tie_break` and `scripts/balance_benchmark.py` (it compared castle-rule
+variants; reproducible at `86b90fa`).
+
+**Tests:** the aiming values in the tests come from an independent simulation (its own physics and
+a fine-sampling collision check), not from `battle.py`.
 
 Human gameplay acceptance is pending.

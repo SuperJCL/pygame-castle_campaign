@@ -41,7 +41,7 @@ def calculate_damage(attack, defense, defending, multiplier=1.0, ignores_def=Fal
 
 
 class ShotDamage:
-    """How hard one cannon shot hits: damage to each castle block in the blast, and
+    """How hard one cannon shot hits: damage to each cover block in the blast, and
     how its damage to characters is worked out (see calculate_damage)."""
 
     def __init__(self, block_damage, multiplier=1.0, ignores_def=False):
@@ -61,7 +61,7 @@ class Character:
     BASE_HP = None
     BASE_ATK = None
     BASE_DEF = None
-    BLOCK_DAMAGE = None         # damage to each castle block hit by this character's Attack
+    BLOCK_DAMAGE = None         # damage to each cover block hit by this character's Attack
     SPECIAL_NAME = None
     SPECIAL_COOLDOWN = 0        # rounds to wait after using the special
 
@@ -260,28 +260,29 @@ class Archer(Character):
 
 
 class Engineer(Character):
-    """Support role: balanced stats, can repair the castle."""
+    """Support role: balanced stats, can repair the team's cover blocks."""
     BASE_HP = 110
     BASE_ATK = 34
     BASE_DEF = 8
     BLOCK_DAMAGE = 60
     SPECIAL_NAME = "Repair"
     SPECIAL_COOLDOWN = 4
-    SPECIAL_DESCRIPTION = "Restores up to 150 castle HP, most damaged blocks first."
-    REPAIR_POOL = 150                    # castle HP restored by one Repair, at most
+    SPECIAL_DESCRIPTION = "Restores up to 150 HP to damaged cover blocks, most damaged first."
+    REPAIR_POOL = 150                    # block HP restored by one Repair, at most
                                          # (75 until M3.2, see docs/M3.2_balance_report.md)
 
     def special_blocked_reason(self, team):
         """Repair also needs something to repair (a damaged block that still stands)."""
         reason = super().special_blocked_reason(team)
         if reason is None and not team.castle.is_damaged():
-            reason = "Repair: nothing to repair (no castle block is damaged)"
+            reason = "Repair: nothing to repair (no standing cover block is damaged)"
         return reason
 
     def use_special(self, team):
-        """Repair: up to REPAIR_POOL HP back for the team's castle. Nothing is fired."""
+        """Repair: up to REPAIR_POOL HP back for the team's damaged blocks (destroyed blocks
+        stay destroyed). Nothing is fired."""
         restored = team.castle.repair(self.REPAIR_POOL)
-        return f"{self.name} uses Repair: the castle regains {restored} HP.", None
+        return f"{self.name} uses Repair: the cover regains {restored} HP.", None
 
 
 # The three roles, in the order the team-selection screen shows them.

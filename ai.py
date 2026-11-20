@@ -300,15 +300,26 @@ class AIController:
     # ----- one turn ------------------------------------------------------------------
 
     def take_turn(self, battle):
-        """Choose and carry out this turn's action. Returns the Plan, or None if the AI
-        may not act now (not its turn, a shot in the air, or the game is over)."""
+        """Choose and carry out this turn's action at once. Returns the Plan, or None if the
+        AI may not act now (not its turn, a shot in the air, or the game is over).
+
+        The tests and benchmarks use this. The game (main.py) calls choose() and carry_out()
+        separately instead: since M3.4-C it first shows the character running to the cannon,
+        and carries out a firing plan only when the character gets there."""
         plan = self.choose(battle)
         if plan is None:
             return None
+        return self.carry_out(battle, plan)
+
+    def carry_out(self, battle, plan):
+        """Carry out a Plan from choose(): aim the cannon if the plan fires, then call
+        Battle.perform_action(), the method the ATTACK / DEFEND / SPECIAL buttons call.
+        Returns the plan, or None if the plan is no longer allowed (then nothing changes)."""
+        if battle.why_not_allowed(plan.actor_index, plan.action) is not None:
+            return None                          # not in play: choose() checked the plan
         if plan.fires_a_shot():
             aim_cannon(battle.cannons[self.side], plan.angle, plan.power)
-        if not battle.perform_action(plan.actor_index, plan.action):
-            return None                          # can't happen: choose() checked the plan
+        battle.perform_action(plan.actor_index, plan.action)
         self.defended_last_turn = plan.defensive
         return plan
 

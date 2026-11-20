@@ -16,8 +16,9 @@ try:
     import pygame
     import main
     from ai import AIController
-    from battle import ROUND_LIMIT
-    from castle import DEFAULT_LAYOUT, layout_problem, slot_position
+    from animation import FIRE, FIRE_FRAMES, RETURN_FRAMES, RETURN_TO_SLOT, RUN_FRAMES, RUN_TO_CANNON, firing_x
+    from battle import CANNON_PIVOT, ROUND_LIMIT, SLOT_X, Battle
+    from castle import DEFAULT_LAYOUT, GROUND_Y, layout_problem, slot_position
     from characters import Archer, Engineer, Knight
 except ImportError:          # Pygame is not installed: the tests below are skipped
     pygame = None
@@ -28,6 +29,8 @@ SHIFT = pygame.KMOD_SHIFT if pygame else 0
 COVER_WALL = (45, 76)        # comes down on the enemy cover: 4 blocks in the blast
 FRONT_CHARACTER = (45, 83)   # over the cover onto the enemy in slot 0 (the blast also reaches slot 1)
 HARMLESS = (80, 10)          # comes down beside the shooter's own cannon: no damage
+LOW_AND_SOFT = (5, 10)       # also harmless, and quicker: it lands about 18 frames after launch,
+                             # while the shooter is still walking back from the cannon
 
 
 def load_sdl():
@@ -41,12 +44,23 @@ def load_sdl():
 
 
 def finish_shot(game):
-    """Run frames until the shot in flight has landed."""
+    """Run frames until the attack is over (M3.4-C): the character has run to the cannon and
+    fired, the shot has landed and the character is back in its slot."""
     for _ in range(1000):
-        if game.battle.projectile is None:
+        if game.battle.projectile is None and not game.cannon_run.is_busy():
             return
         game.update()
-    raise AssertionError("the shot never landed")
+    raise AssertionError("the attack never finished")
+
+
+def run_to_cannon(game):
+    """Run frames until the running character reaches the cannon and the shot is launched.
+    Returns how many frames that took."""
+    for frame in range(1, RUN_FRAMES + 2):
+        game.update()
+        if game.battle.projectile is not None:
+            return frame
+    raise AssertionError("no shot was launched")
 
 
 def aim(game, angle, power):
@@ -495,6 +509,7 @@ class ActionButtonTest(MainTestCase):
         self.start([Knight], [Engineer])
         aim(self.game, *COVER_WALL)
         self.click(self.game.action_buttons["attack"].rect)
+        run_to_cannon(self.game)                                       # M3.4-C: fired at the cannon
         self.assertIsNotNone(self.game.battle.projectile)
         finish_shot(self.game)
         self.assertEqual(self.game.battle.castles["right"].total_hp(), 600 - 200)  # Knight: 4 x 50
@@ -503,6 +518,8 @@ class ActionButtonTest(MainTestCase):
     def test_space_is_the_attack_shortcut(self):
         self.start([Knight], [Engineer])
         self.game.handle_key(pygame.K_SPACE, 0)
+        self.assertEqual(self.game.cannon_run.shot.action, "attack")
+        run_to_cannon(self.game)
         self.assertIsNotNone(self.game.battle.projectile)
 
     def test_arrow_keys_aim_the_active_cannon(self):
@@ -539,6 +556,7 @@ class ActionButtonTest(MainTestCase):
         self.start([Archer], [Knight])
         aim(self.game, *FRONT_CHARACTER)
         self.click(self.game.action_buttons["special"].rect)
+        run_to_cannon(self.game)
         self.assertIsNotNone(self.game.battle.projectile)
         finish_shot(self.game)
         self.assertEqual(self.game.battle.teams["right"].characters[0].hp, 140 - 60)
@@ -565,7 +583,11 @@ class ActionButtonTest(MainTestCase):
     def test_buttons_do_nothing_while_a_shot_flies(self):
         self.start([Knight], [Engineer])
         self.click(self.game.action_buttons["attack"].rect)
-        self.game.update()
+        run_to_cannon(self.game)
+        for _ in range(FIRE_FRAMES + RETURN_FRAMES):                  # the Knight is back; the shot flies on
+            self.game.update()
+        self.assertIsNotNone(self.game.battle.projectile)
+        self.assertFalse(self.game.cannon_run.is_busy())
         self.assertFalse(self.game.action_buttons["defend"].enabled)
         self.click(self.game.action_buttons["defend"].rect)
         self.assertFalse(self.game.battle.teams["left"].characters[0].is_defending)
@@ -610,6 +632,7 @@ class KeyboardTest(MainTestCase):
 
     def test_aiming_is_locked_while_a_shot_flies(self):
         self.game.handle_key(pygame.K_SPACE, 0)
+        run_to_cannon(self.game)
         self.game.handle_key(pygame.K_UP, 0)
         self.game.handle_key(pygame.K_RIGHT, 0)
         cannon = self.game.battle.cannons["left"]
@@ -617,7 +640,8 @@ class KeyboardTest(MainTestCase):
 
     def test_r_during_a_flight_cancels_the_shot(self):
         self.game.handle_key(pygame.K_SPACE, 0)
-        for _ in range(10):
+        run_to_cannon(self.game)
+        for _ in range(FIRE_FRAMES + RETURN_FRAMES + 10):              # the Knight is back by now
             self.game.update()
         self.assertIsNotNone(self.game.battle.projectile)
         self.game.handle_key(pygame.K_r, 0)
@@ -733,6 +757,7 @@ class AbilityPreflightTest(MainTestCase):
         self.assertEqual((self.game.battle.round_number, archer.special_cooldown), (4, 0))
         self.assertTrue(self.game.action_buttons["special"].enabled)
         self.click(self.game.action_buttons["special"].rect)
+        run_to_cannon(self.game)
         self.assertIsNotNone(self.game.battle.projectile)     # round 4 = 1 + 3: ready again
 
 
@@ -1070,10 +1095,9 @@ class PlayerVsAIBattleTest(MainTestCase):
         self.assertEqual(self.game.battle.active_side, "right")   # still thinking: nothing done yet
         self.assertIsNone(self.game.battle.projectile)
         self.run_frames(1)
-        log = " ".join(self.game.log)
-        self.assertIn("AI (Normal):", log)                        # the computer explains its choice
-        self.assertRegex(log, r"RIGHT \w+ (attacks|defends|uses)")  # and its action is logged
-        finish_shot(self.game)
+        self.assertIn("AI (Normal):", " ".join(self.game.log))     # the computer explains its choice
+        finish_shot(self.game)                                    # (an attack is fired at the cannon)
+        self.assertRegex(" ".join(self.game.log), r"RIGHT \w+ (attacks|defends|uses)")  # its action is logged
         self.assertEqual(self.game.battle.active_side, "left")    # one action, then the human again
         self.assertEqual(self.game.battle.round_number, 2)
 
@@ -1108,6 +1132,408 @@ class PlayerVsAIBattleTest(MainTestCase):
         self.assertEqual(self.game.state, "battle")
         self.assertEqual(self.game.battle.round_number, 1)
         self.assertIsNotNone(self.game.ai)
+
+
+class CannonRunTest(MainTestCase):
+    """M3.4-C: an attacking character runs to its team's cannon, the shot is fired once when it
+    gets there, and it runs back. The Battle still owns positions, damage and turns."""
+
+    def setUp(self):
+        super().setUp()
+        self.start([Knight, Archer], [Knight, Engineer])          # two players, default cover
+
+    def record_events(self):
+        """From now on, keep every Battle event the game shows (it still shows them)."""
+        seen, show = [], self.game.show_event
+
+        def record(event):
+            seen.append(event)
+            show(event)
+        self.game.show_event = record
+        return seen
+
+    def pixel(self, x, y):
+        self.game.draw()
+        return tuple(self.screen.get_at((round(x), y)))[:3]
+
+    def body_pixel(self, x):
+        """The colour 20 px above the ground at x: a figure's body when one is drawn there."""
+        return self.pixel(x, GROUND_Y - 20)
+
+    def press_everything(self):
+        """Every combat input a player could try: all three buttons, SPACE, aiming and 1-3."""
+        for button in self.game.action_buttons.values():
+            self.game.handle_click(button.rect.center)
+        for key in (pygame.K_SPACE, pygame.K_UP, pygame.K_RIGHT, pygame.K_2):
+            self.game.handle_key(key, 0)
+        self.game.handle_click(pygame.Rect(self.character_rect(self.game.battle.active_side, 1)).center)
+
+    def test_attack_starts_the_run_and_fires_only_when_the_cannon_is_reached(self):
+        events = self.record_events()
+        aim(self.game, *COVER_WALL)
+        self.click(self.game.action_buttons["attack"].rect)                # the click, then 1 frame
+        run = self.game.cannon_run
+        self.assertEqual((run.state, run.shot.side, run.shot.actor_index, run.shot.action),
+                         (RUN_TO_CANNON, "left", 0, "attack"))
+        self.assertEqual((run.shot.angle, run.shot.power), COVER_WALL)    # the aim when ATTACK was clicked
+        panel = " ".join(self.game.selected_info_lines() + self.game.action_hint_lines())
+        self.assertNotIn("choose who acts", panel)                         # the panel doesn't invite input
+        self.assertIn("LEFT Knight runs to the cannon", panel)
+        for _ in range(RUN_FRAMES - 2):
+            self.game.update()
+            self.assertIsNone(self.game.battle.projectile)
+        self.assertEqual([e for e in events if e["type"] in ("action", "fire")], [])   # the Battle waits
+        self.game.update()                                                # frame RUN_FRAMES: at the cannon
+        self.assertIsNotNone(self.game.battle.projectile)
+        self.assertEqual(run.state, FIRE)
+        self.assertEqual([e["type"] for e in events if e["type"] in ("action", "fire")], ["action", "fire"])
+        finish_shot(self.game)
+        self.assertEqual(sum(e["type"] == "fire" for e in events), 1)
+        self.assertEqual(self.game.battle.castles["right"].total_hp(), 600 - 200)     # Knight: 4 x 50
+
+    def test_clicks_and_keys_during_the_run_add_nothing(self):
+        events = self.record_events()
+        aim(self.game, *COVER_WALL)
+        cannon = self.game.battle.cannons["left"]
+        self.click(self.game.action_buttons["attack"].rect)
+        self.game.handle_key(pygame.K_SPACE, 0)                           # the same frame as the click
+        frames = 0
+        while self.game.cannon_run.is_busy():                             # run, fire pose and return
+            self.press_everything()
+            self.assertFalse(any(button.enabled for button in self.game.action_buttons.values()))
+            self.game.update()
+            frames += 1
+        self.assertGreaterEqual(frames, FIRE_FRAMES + RETURN_FRAMES)
+        self.assertEqual((cannon.angle, cannon.power), COVER_WALL)
+        self.assertEqual(self.game.selected["left"], 0)                   # still the Knight's turn
+        finish_shot(self.game)
+        self.assertEqual([(e["name"], e["action"]) for e in events if e["type"] == "action"],
+                         [("Knight", "attack")])
+        self.assertEqual(sum(e["type"] == "fire" for e in events), 1)
+        self.assertEqual([e for e in events if e["type"] == "invalid"], [])
+        self.assertFalse(self.game.battle.teams["left"].characters[0].is_defending)
+        self.assertEqual(self.game.battle.active_side, "right")
+
+    def test_the_shot_uses_the_chosen_characters_stats(self):
+        self.click(self.character_rect("left", 1))                       # the Archer
+        aim(self.game, *FRONT_CHARACTER)
+        self.click(self.game.action_buttons["attack"].rect)
+        run = self.game.cannon_run
+        self.assertTrue(run.moves("left", 1))
+        self.assertEqual(run.slot_x, SLOT_X["left"][1])                  # it starts from its own slot (x 95)
+        self.assertLess(abs(run.actor_x() - SLOT_X["left"][1]), 15)      # one frame into the run
+        finish_shot(self.game)
+        # The Archer: 40 - 12 = 28 to the RIGHT Knight (the LEFT Knight would have done 18).
+        self.assertEqual(self.game.battle.teams["right"].characters[0].hp, 140 - 28)
+        self.assertEqual(self.game.battle.teams["left"].characters[1].exp, 10)
+        self.assertIn("LEFT Archer attacks.", self.game.log)
+
+    def test_power_shot_takes_the_same_run_and_keeps_its_special_damage(self):
+        archer = self.game.battle.teams["left"].characters[1]
+        self.click(self.character_rect("left", 1))
+        aim(self.game, *FRONT_CHARACTER)
+        self.click(self.game.action_buttons["special"].rect)
+        run = self.game.cannon_run
+        self.assertEqual((run.state, run.shot.action), (RUN_TO_CANNON, "special"))
+        self.assertEqual(archer.special_cooldown, 0)                      # nothing is used before the shot
+        self.assertEqual(run_to_cannon(self.game), RUN_FRAMES - 1)
+        self.assertEqual(archer.special_cooldown, 3)
+        finish_shot(self.game)
+        self.assertEqual(self.game.battle.teams["right"].characters[0].hp, 140 - 60)   # 1.5 x 40, no DEF
+        self.assertIn("LEFT Archer uses Power Shot!", self.game.log)
+
+    def test_the_runner_is_drawn_once_where_it_runs_and_battle_positions_never_move(self):
+        battle = self.game.battle
+        teams = battle.teams.values()
+        rects = [team.character_rect(i) for team in teams for i in range(len(team.characters))]
+        centres = [team.slot_center(i) for team in teams for i in range(len(team.characters))]
+        slot, cannon = SLOT_X["left"][0], firing_x("left")
+        knight_colour, sky = main.TEAM_COLORS["left"], main.SKY_COLOR
+        self.assertEqual(self.body_pixel(slot), knight_colour)
+        aim(self.game, *COVER_WALL)
+        self.click(self.game.action_buttons["attack"].rect)
+        run, seen = self.game.cannon_run, {}
+        while run.is_busy():
+            self.assertEqual([team.character_rect(i) for team in teams for i in range(len(team.characters))], rects)
+            self.assertEqual([team.slot_center(i) for team in teams for i in range(len(team.characters))], centres)
+            moment = (run.state, run.frame)
+            if moment in ((RUN_TO_CANNON, RUN_FRAMES // 2), (FIRE, 1), (RETURN_TO_SLOT, RETURN_FRAMES // 2)):
+                seen[run.state] = run.actor_x()
+                self.assertEqual(self.body_pixel(run.actor_x()), knight_colour, moment)   # drawn here ...
+                self.assertEqual(self.body_pixel(slot), sky, moment)                     # ... and not at home
+            self.game.update()
+        halfway = (slot + cannon) / 2
+        self.assertEqual(seen, {RUN_TO_CANNON: halfway, FIRE: cannon, RETURN_TO_SLOT: halfway})
+        self.assertEqual(self.body_pixel(slot), knight_colour)            # back in its slot
+        self.assertEqual(self.body_pixel(cannon), sky)
+
+    def test_the_flight_is_the_same_as_a_shot_fired_straight_from_the_battle(self):
+        aim(self.game, *COVER_WALL)
+        self.click(self.game.action_buttons["attack"].rect)
+        run_to_cannon(self.game)              # the launch frame also moved the shot its first step
+        shot, path = self.game.battle.projectile, []
+        while self.game.battle.projectile is not None:
+            path.append((shot.x, shot.y))
+            self.game.update()
+        twin = Battle(roster={side: [type(c) for c in team.characters]
+                              for side, team in self.game.battle.teams.items()},
+                      layouts=self.game.battle.layouts)
+        aim_twin = twin.cannons["left"]
+        aim_twin.adjust_angle(COVER_WALL[0] - aim_twin.angle)
+        aim_twin.adjust_power(COVER_WALL[1] - aim_twin.power)
+        twin.perform_action(0, "attack")
+        twin_path = []
+        while twin.projectile is not None:
+            twin.update()
+            if twin.projectile is not None:
+                twin_path.append((twin.projectile.x, twin.projectile.y))
+        explosion = next(e for e in twin.take_events() if e["type"] == "explosion")
+        self.assertGreater(len(path), 60)
+        self.assertEqual(path, twin_path)                                 # every step, exactly
+        self.assertEqual(self.game.explosions[0][:2], [explosion["x"], explosion["y"]])
+        self.assertEqual([b.hp for b in self.game.battle.castles["right"].blocks],
+                         [b.hp for b in twin.castles["right"].blocks])
+
+    def test_the_turn_passes_only_when_the_shot_has_landed(self):
+        aim(self.game, *COVER_WALL)
+        self.click(self.game.action_buttons["attack"].rect)
+        while self.game.battle.projectile is None:                        # the run
+            self.assertEqual(self.game.battle.active_side, "left")
+            self.game.update()
+        while self.game.battle.projectile is not None:                    # the flight
+            self.assertEqual(self.game.battle.active_side, "left")
+            self.game.update()
+        self.assertEqual(self.game.battle.active_side, "right")
+
+    def test_the_next_team_waits_until_the_runner_is_back_in_its_slot(self):
+        aim(self.game, *LOW_AND_SOFT)
+        self.click(self.game.action_buttons["attack"].rect)
+        run_to_cannon(self.game)
+        while self.game.battle.projectile is not None:
+            self.game.update()
+        run = self.game.cannon_run
+        self.assertEqual(self.game.battle.active_side, "right")           # the Battle passed the turn ...
+        self.assertTrue(run.is_busy())                                     # ... the LEFT Knight walks back
+        cannon = self.game.battle.cannons["right"]
+        aim_before = (cannon.angle, cannon.power)
+        while run.is_busy():
+            self.press_everything()
+            self.game.update()
+        self.assertEqual((cannon.angle, cannon.power), aim_before)
+        self.assertIsNone(self.game.battle.projectile)
+        self.assertEqual(self.game.selected["right"], 0)
+        self.assertFalse(any(c.is_defending for c in self.game.battle.teams["right"].characters))
+        self.assertEqual(self.game.battle.active_side, "right")
+        self.game.update()
+        self.assertTrue(self.game.action_buttons["attack"].enabled)       # now RIGHT may act
+        self.game.handle_key(pygame.K_SPACE, 0)
+        self.assertEqual(self.game.cannon_run.shot.side, "right")
+
+    def test_two_players_each_run_to_their_own_cannon(self):
+        events = self.record_events()
+        for side in ("left", "right"):
+            aim(self.game, *HARMLESS)
+            self.click(self.game.action_buttons["attack"].rect)
+            run = self.game.cannon_run
+            self.assertEqual((run.shot.side, run.slot_x), (side, SLOT_X[side][0]))
+            run_to_cannon(self.game)
+            self.assertEqual((run.actor_x(), self.game.battle.projectile.side), (firing_x(side), side))
+            finish_shot(self.game)
+        self.assertEqual([e["side"] for e in events if e["type"] == "fire"], ["left", "right"])
+        self.assertEqual((self.game.battle.active_side, self.game.battle.round_number), ("left", 2))
+
+    def test_after_a_rematch_right_moves_first_and_runs_to_its_own_cannon(self):
+        self.game.handle_key(pygame.K_r, 0)
+        self.assertEqual(self.game.battle.active_side, "right")
+        aim(self.game, *HARMLESS)
+        self.click(self.game.action_buttons["attack"].rect)
+        run = self.game.cannon_run
+        self.assertEqual(run.shot.side, "right")
+        self.assertTrue(firing_x("right") < run.actor_x() < SLOT_X["right"][0])   # running left, to x 964
+        self.assertEqual(run.facing(), -1)
+        run_to_cannon(self.game)
+        self.assertEqual(self.game.battle.projectile.side, "right")
+        self.assertEqual(run.actor_x(), CANNON_PIVOT["right"][0] + 24)
+        finish_shot(self.game)
+        self.assertEqual((self.game.battle.active_side, self.game.battle.round_number), ("left", 1))
+
+    def test_r_during_the_run_cancels_it_and_nothing_is_fired_later(self):
+        events = self.record_events()
+        self.click(self.game.action_buttons["attack"].rect)
+        for _ in range(5):
+            self.game.update()
+        self.game.handle_key(pygame.K_r, 0)
+        battle = self.game.battle
+        self.assertFalse(self.game.cannon_run.is_busy())
+        self.assertEqual((self.game.state, battle.round_number, battle.active_side), ("battle", 1, "right"))
+        for _ in range(3 * RUN_FRAMES):
+            self.game.update()
+        self.assertIsNone(battle.projectile)
+        self.assertEqual([e for e in events if e["type"] in ("action", "fire")], [])
+        self.assertTrue(self.game.action_buttons["attack"].enabled)       # RIGHT can play the new match
+
+    def test_r_after_the_shot_left_the_cannon_also_restarts_cleanly(self):
+        for frames_after_launch in (2, FIRE_FRAMES + 5):                  # firing pose, then walking back
+            with self.subTest(frames=frames_after_launch):
+                self.click(self.game.action_buttons["attack"].rect)
+                run_to_cannon(self.game)
+                for _ in range(frames_after_launch):
+                    self.game.update()
+                self.assertTrue(self.game.cannon_run.is_busy())
+                self.game.handle_key(pygame.K_r, 0)
+                self.assertFalse(self.game.cannon_run.is_busy())
+                self.assertIsNone(self.game.battle.projectile)
+                self.assertEqual(self.game.battle.round_number, 1)
+                self.game.handle_key(pygame.K_r, 0)                       # LEFT first again for the next pass
+
+    def test_defend_rally_and_repair_happen_at_once_without_a_run(self):
+        battle = self.game.battle
+        self.click(self.game.action_buttons["defend"].rect)              # LEFT Knight: Defend
+        self.assertFalse(self.game.cannon_run.is_busy())
+        self.assertEqual(battle.active_side, "right")
+        battle.castles["right"].blocks[0].take_damage(30)
+        self.click(self.character_rect("right", 1))                       # RIGHT Engineer: Repair
+        self.click(self.game.action_buttons["special"].rect)
+        self.assertFalse(self.game.cannon_run.is_busy())
+        self.assertEqual(battle.castles["right"].total_hp(), 600)
+        self.assertEqual(battle.active_side, "left")
+        self.click(self.game.action_buttons["special"].rect)              # LEFT Knight: Rally
+        self.assertFalse(self.game.cannon_run.is_busy())
+        self.assertTrue(all(c.is_defending for c in battle.teams["left"].characters))
+        self.assertEqual(battle.active_side, "right")
+
+    def reach_the_last_turn(self):
+        """Both teams defend until it is RIGHT's turn in round 30, the match's last turn."""
+        battle = self.game.battle
+        while not (battle.round_number == ROUND_LIMIT and battle.active_side == "right"):
+            self.click(self.game.action_buttons["defend"].rect)
+
+    def end_while_walking_back(self):
+        """RIGHT's last turn is a quick harmless shot: the round limit ends the match while the
+        RIGHT Knight is still walking back from the cannon."""
+        self.reach_the_last_turn()
+        aim(self.game, *LOW_AND_SOFT)
+        self.click(self.game.action_buttons["attack"].rect)
+        run_to_cannon(self.game)
+        while self.game.battle.projectile is not None:
+            self.game.update()
+        self.assertEqual((self.game.state, self.game.battle.winner), ("result", "draw"))
+        self.assertTrue(self.game.cannon_run.is_busy())
+
+    def test_a_match_that_ends_while_the_runner_walks_back_lets_it_finish(self):
+        self.end_while_walking_back()
+        frames = 0
+        while self.game.cannon_run.is_busy():
+            self.game.update()
+            frames += 1
+        self.assertLessEqual(frames, FIRE_FRAMES + RETURN_FRAMES)
+        self.assertEqual(self.body_pixel(SLOT_X["right"][0]), main.TEAM_COLORS["right"])
+        self.click(self.game.rematch_button.rect)
+        self.assertEqual(self.game.state, "battle")
+        self.assertFalse(self.game.cannon_run.is_busy())
+
+    def test_rematch_and_quitting_stop_a_run(self):
+        self.end_while_walking_back()
+        self.click(self.game.rematch_button.rect)                         # Rematch on the result screen
+        self.assertFalse(self.game.cannon_run.is_busy())
+        self.assertEqual(self.game.battle.active_side, "right")           # it alternates as before
+        self.click(self.game.action_buttons["attack"].rect)
+        self.assertTrue(self.game.cannon_run.is_busy())
+        self.game.handle_key(pygame.K_ESCAPE, 0)                          # closing the game mid-run
+        self.assertFalse(self.game.running)
+        self.assertFalse(self.game.cannon_run.is_busy())
+        self.assertIsNone(self.game.battle.projectile)
+
+    def test_change_teams_stops_a_run(self):
+        self.end_while_walking_back()
+        self.click(self.game.change_teams_button.rect)
+        self.assertEqual(self.game.state, "select")
+        self.assertFalse(self.game.cannon_run.is_busy())
+        self.click(self.game.start_button.rect)                           # the next match starts idle
+        self.click(self.game.confirm_button.rect)
+        self.click(self.game.confirm_button.rect)
+        self.assertEqual(self.game.state, "battle")
+        self.assertFalse(self.game.cannon_run.is_busy())
+
+    def test_a_runner_defeated_meanwhile_leaves_no_figure_behind(self):
+        # Not possible in play (no friendly fire, and the enemy waits), so forced from outside.
+        events = self.record_events()
+        self.click(self.game.action_buttons["attack"].rect)
+        for _ in range(RUN_FRAMES // 2):
+            self.game.update()
+        runner_x = self.game.cannon_run.actor_x()
+        self.game.battle.teams["left"].characters[0].take_damage(500)
+        self.game.update()
+        self.assertFalse(self.game.cannon_run.is_busy())
+        self.assertNotEqual(self.body_pixel(runner_x), main.TEAM_COLORS["left"])
+        self.assertEqual(self.pixel(SLOT_X["left"][0], GROUND_Y - 4), main.DEFEATED_COLOR)
+        self.assertEqual([e for e in events if e["type"] in ("action", "fire")], [])
+
+    def test_the_muzzle_flash_starts_on_the_frame_the_shot_is_launched(self):
+        aim(self.game, *COVER_WALL)
+        point = main.muzzle_point(self.game.battle.cannons["left"])
+        self.click(self.game.action_buttons["attack"].rect)
+        while self.game.battle.projectile is None:
+            self.assertNotEqual(self.pixel(*point), main.FLASH_COLOR)
+            self.game.update()
+        self.assertEqual(self.pixel(*point), main.FLASH_COLOR)            # the launch frame
+        while self.game.cannon_run.state == FIRE:
+            self.game.update()
+        self.assertNotEqual(self.pixel(*point), main.FLASH_COLOR)         # gone after the firing pose
+
+
+class ComputerCannonRunTest(MainTestCase):
+    """M3.4-C: the computer's attacks take the same run: it decides first (AIController.choose)
+    and the shot is carried out (AIController.carry_out) when its character reaches the cannon."""
+
+    def setUp(self):
+        super().setUp()
+        self.game = main.Game(self.screen, ai_seed=4)
+        self.click(self.game.difficulty_buttons["hard"].rect)    # Hard never defends when unhurt
+        self.start_vs_ai([Knight])
+
+    def wait_for_the_computer(self):
+        for _ in range(main.AI_DELAY_FRAMES + 1):
+            if self.game.cannon_run.is_busy() or self.game.battle.active_side == "left":
+                return
+            self.game.update()
+
+    def test_the_computer_runs_to_its_cannon_before_its_shot_is_fired(self):
+        seen, show = [], self.game.show_event
+        self.game.show_event = lambda event: (seen.append(event), show(event))
+        self.click(self.game.action_buttons["defend"].rect)              # the human passes
+        self.wait_for_the_computer()
+        run, battle = self.game.cannon_run, self.game.battle
+        self.assertEqual((run.state, run.shot.side), (RUN_TO_CANNON, "right"))
+        plan = run.shot.plan
+        self.assertIsNotNone(plan)
+        self.assertIn(f"AI (Hard): {plan.reason}.", self.game.log)         # it explains its choice at once
+        self.assertEqual((battle.cannons["right"].angle, battle.cannons["right"].power), (plan.angle, plan.power))
+        self.assertIsNone(battle.projectile)                                # ... but has not fired
+        self.assertEqual([e for e in seen if e["type"] in ("action", "fire") and e["side"] == "right"], [])
+        self.assertEqual(run_to_cannon(self.game), RUN_FRAMES)
+        self.assertEqual(battle.projectile.side, "right")
+        self.assertEqual(run.actor_x(), firing_x("right"))
+        finish_shot(self.game)
+        self.assertEqual([e["side"] for e in seen if e["type"] == "fire"], ["right"])
+        self.assertEqual((battle.active_side, battle.round_number), ("left", 2))
+        self.assertFalse(self.game.ai.defended_last_turn)
+
+    def test_the_computer_waits_until_the_human_runner_is_back(self):
+        aim(self.game, *LOW_AND_SOFT)
+        self.click(self.game.action_buttons["attack"].rect)
+        run_to_cannon(self.game)
+        while self.game.battle.projectile is not None:
+            self.game.update()
+        self.assertEqual(self.game.battle.active_side, "right")
+        self.assertTrue(self.game.cannon_run.is_busy())                    # the LEFT Knight walks back
+        log_length = len(self.game.log)
+        while self.game.cannon_run.is_busy():
+            self.assertEqual(self.game.ai_wait, 0)                          # the computer has not started
+            self.game.update()
+        self.assertFalse(any("AI (Hard)" in line for line in self.game.log[log_length:]))
+        self.wait_for_the_computer()
+        self.assertEqual(self.game.cannon_run.shot.side, "right")
 
 
 if __name__ == "__main__":

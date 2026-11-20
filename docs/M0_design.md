@@ -1,14 +1,14 @@
 # Castle Siege — M0 Requirements and Architecture
 
-Status: **Revision 3 (M2.3), updated for M3.4-B.1.** This is the living design document. The game
-is implemented up to M3.4-B.1 (Player vs AI, two-player hot seat, the M3.2 balance numbers, the
+Status: **Revision 3 (M2.3), updated for M3.4-C.** This is the living design document. The game
+is implemented up to M3.4-C (Player vs AI, two-player hot seat, the M3.2 balance numbers, the
 M3.3 match flow, the M3.4-A redesign: elimination-only victory and deployable cover, M3.4-B: the
-cover placement screen and a cover-aware computer opponent, and M3.4-B.1: Easy's aiming error
-lowered so that its matches finish). Revision 3's final decisions and the
-M3.2 / M3.3 / M3.4 changes, just below, override anything older in this document; **where they
-disagree, the M3.4-B block wins, then M3.4-A.** The AI that was built differs from the plan in
-§6.3; see §14, "M3.1 notes" and "M3.4-B notes". The course-compliance checklist is
-`docs/M3.3_course_compliance.md` (updated for M3.4-B).
+cover placement screen and a cover-aware computer opponent, M3.4-B.1: Easy's aiming error
+lowered so that its matches finish, and M3.4-C: the character-to-cannon animation). Revision 3's
+final decisions and the M3.2 / M3.3 / M3.4 changes, just below, override anything older in this
+document; **where they disagree, the later M3.4 block wins (M3.4-C, then M3.4-B, then M3.4-A).**
+The AI that was built differs from the plan in §6.3; see §14, "M3.1 notes" and "M3.4-B notes".
+The course-compliance checklist is `docs/M3.3_course_compliance.md` (updated for M3.4-C).
 
 ### Revision 3 — final decisions (made by the PM and the user in M2.3)
 - **Alternating turns are the final design. Simultaneous turns are cancelled.** The left team
@@ -123,6 +123,41 @@ screen and the AI redesign are M3.4-B, the run-to-cannon animation M3.4-C.
 - **Code layout:** `drawing.py` now holds the shared look (colours, text, figures, buttons), moved
   out of `main.py` unchanged.
 - Details are in §14, "M3.4-B notes". Human play-testing is pending.
+
+### M3.4-C — character-to-cannon animation (visual only)
+- **Shared cannon:** each team still has one cannon in front of its cover, and every shot starts
+  at its pivot with the acting character's stats (C6). New: the acting character is seen running
+  to it, firing it and running back.
+- **States** (`animation.CannonRun`, no Pygame): IDLE → RUN_TO_CANNON (20 frames) → FIRE (12) →
+  RETURN_TO_SLOT (20) → IDLE, counted in frames at 60 FPS. `step()` returns True on exactly one
+  frame, the one on which the character reaches the cannon. A `PendingShot` keeps what was asked
+  for: side, slot, "attack" or "special", the aim, and the computer's Plan (or None).
+- **Flow:** a click on ATTACK (or SPACE, or Power Shot) → `Game.do_action` checks
+  `Battle.why_not_allowed`, then `start_cannon_run` (nothing is fired) → each frame
+  `update_cannon_run` → on arrival `fire_pending_shot` → `Battle.perform_action` (exactly once) →
+  the shot flies (`Battle.update`) → `_end_shot` → `_finish_turn` → the next team, which may act
+  only when the run is IDLE again. Defend, Rally and Repair still call `perform_action` at once.
+- **The Battle stays authoritative:** `battle.py` is unchanged. It keeps every character in its
+  slot, so hit boxes, collisions, damage, EXP and turns never depend on the animation. Only the
+  figure is drawn at `CannonRun.actor_x()`; the name, HP bar and cooldown stay over the slot. The
+  runner can't be hit: no friendly fire, and the enemy can't act until the run is over.
+- **Input lock:** `Game.controls_locked()` (a run, a shot in flight, the game over, or the
+  computer's turn) greys out the buttons and ignores the battle keys; `do_action` and
+  `click_battle` also refuse while a run is going. R (rematch), Esc, Rematch and Change teams
+  still work: they cancel the run, and a cancelled run never fires.
+- **The computer:** `AIController.take_turn` is split into `choose` (decide, change nothing) and
+  `carry_out` (aim, then `perform_action`); `take_turn` = both, unchanged for the tests and
+  benchmarks. In the game, `update_ai` calls `choose`, turns the cannon, and starts the same run;
+  `carry_out` runs on arrival. The computer's search, error and choices are unchanged, and it
+  waits (its 40-frame pause starts only when no run is going).
+- **Drawing:** a running pose (body lifted 6 px, legs that swap and a 2 px bob every 5 frames,
+  facing the cannon on the way there and its slot on the way back), a firing pose (an arm stretched
+  to the cannon) and a muzzle flash at the barrel tip during FIRE, which starts on the launch
+  frame. The cannon doesn't move. Pygame shapes only.
+- **Unchanged:** projectile physics and spawn point, collision, cover, HP/ATK/DEF/EXP, every
+  action and special, AI difficulty settings, elimination-only victory, the 30-round timeout,
+  rematch alternation, every mode and team size.
+- Details are in §14, "M3.4-C notes". Human play-testing is pending.
 
 Revision 2's original header: *draft for project-manager review; M0 design only.*
 
@@ -579,13 +614,15 @@ What still isn't known (§13, Q1):
 | `castle.py` | M1 | `Block`, `Castle`, castle geometry constants (`GROUND_Y`, `TEMPLATE`, …) | no |
 | `battle.py` | M1, grows in M2 | M1: `Cannon`, `Projectile`, `Battle` (alternating shots). M2: adds `ActionPlan`, `Team`, the phases of §2.2 and the `TURN_MODE` switch | no |
 | `main.py` | M1, grows each milestone | Pygame window, screens, input, all drawing, sound | **yes** |
-| `drawing.py` | M3.4-B | Colours, text, character figures, `Button` (moved out of `main.py`) | **yes** (only these two) |
+| `drawing.py` | M3.4-B | Colours, text, character figures (running and firing poses since M3.4-C), `Button` (moved out of `main.py`) | **yes** (only these two) |
 | `characters.py` | M2 | `calculate_damage`, `Character`, `Knight`, `Archer`, `Engineer`, `ARCHETYPES` | no |
 | `ai.py` | M3.1 | `DIFFICULTY_SETTINGS`, `Plan`, `AIController`, `imagine` (planned: `DIFFICULTY`, `aim_power`) | no |
+| `animation.py` | M3.4-C | `CannonRun` (the run's states, frames and drawing position), `PendingShot`, `firing_x`, `fires_the_cannon` | no |
 
 ```
 main.py ──imports──► battle.py, castle.py         (M1)
-                 ──► characters.py (M2), ai.py (M3)
+                 ──► characters.py (M2), ai.py (M3), drawing.py (M3.4-B), animation.py (M3.4-C)
+animation.py ─imports─► battle.py, characters.py (constants only; it never changes a Battle)
 ai.py   ──imports──► battle.py, castle.py, characters.py (M3.1: it plays on copies of a Battle)
 battle.py ─imports─► castle.py; characters.py from M2
 characters.py, castle.py ── import nothing from the project
@@ -632,8 +669,15 @@ load pygame. It runs the import in a fresh `python -c` subprocess and checks
 | Item | Responsibility |
 |---|---|
 | `Button` (M2) | Rectangle, label, enabled flag, `draw()`, `is_clicked(pos)`. |
-| `Game` | `state` string (screens of §2.1, plus HANDOVER in M3). One `handle_event / update / draw` method group per state; the human's aiming input; all drawing (background, castles with HP-band colours, cannons, characters, HP bars, aim arrow, projectiles, explosions, HUD, buttons, combat log, result screen); sounds (M4). |
+| `Game` | `state` string (screens of §2.1, plus HANDOVER in M3). One `handle_event / update / draw` method group per state; the human's aiming input; all drawing (background, castles with HP-band colours, cannons, characters, HP bars, aim arrow, projectiles, explosions, HUD, buttons, combat log, result screen); sounds (M4). Since M3.4-C it also owns a `CannonRun` and decides *when* an attack is fired (`start_cannon_run`, `update_cannon_run`, `fire_pending_shot`, `controls_locked`). |
 | `main()` | Pygame init and the main loop: `events → update → draw → clock.tick(60)`. |
+
+**`animation.py`** (M3.4-C)
+| Class / function | Responsibility |
+|---|---|
+| `PendingShot` | What was asked for when a run started: `side, actor_index, action, angle, power, plan` (the computer's `Plan`, or `None`). |
+| `CannonRun` | `state` (IDLE, RUN_TO_CANNON, FIRE, RETURN_TO_SLOT), `frame`, `shot`. Methods: `start(shot, slot_x)`, `step() -> bool` (True on the one arrival frame), `cancel()`, `is_busy()`, `moves(side, index)`, `actor_x()`, `facing()`. Never touches a Battle. |
+| `firing_x(side)`, `fires_the_cannon(character, action)` | Where a team fires from (24 px behind its cannon), and which actions take the run (Attack, Power Shot). |
 
 ### 5.3 `Battle.events`: how the logic talks to the screen
 Any `Battle` method (`fire()`, `begin_resolution()`, `update()`, …) may append small
@@ -750,6 +794,8 @@ pygame-castle_campaign/
 ├── battle.py            # M1   Cannon, Projectile, Battle;  M2: ActionPlan, Team, phases
 ├── characters.py        # M2   Character, Knight, Archer, Engineer, calculate_damage
 ├── ai.py                # M3   AIController, aim_power, DIFFICULTY
+├── drawing.py           # M3.4-B  colours, text, figures, Button (Pygame)
+├── animation.py         # M3.4-C  CannonRun: the run to the cannon (no Pygame)
 ├── tests/
 │   ├── test_castle.py       # M1
 │   ├── test_battle.py       # M1, extended in M2
@@ -831,7 +877,7 @@ of the PM's list of important requirements.
 | **C3** | Attacks can miss | **Unknown.** The course may assume every Attack deals damage. | Misses are what make artillery a skill. | Add an assist mode (for example, Easy-only aim help). Not planned. |
 | **C4** | "AI defends below 50 % HP" with a team | **Interpretation.** "HP" is ambiguous with several characters, and our defence is probabilistic: 40 / 50 / 60 % (Easy / Normal / Hard) when a character is below half HP, against 10 / 5 / 0 % otherwise (M3.1 table; the 50 / 70 / 85 % here before M3.3 was an outdated draft). | We use any living AI character below half HP as the trigger. | Set Defend chance to 100 % (one table row). |
 | **C5** | "Defend reduces damage by 50 %" | **Interpretation.** Applied after DEF, minimum 1, to the defending character. *Since M3.2,* the team's blocks also take half damage while it defends (Castle Guard, called Cover Guard since M3.4, our addition). | — | Moving the halving before DEF is a one-line change; `CASTLE_GUARD_PERCENT = 0` turns Cover Guard off. |
-| **C6** | Characters "attack" | **Interpretation.** Characters attack *through* their team's cannon; the actor's stats set the damage. Since M3.4-A the cannon stands on the ground in front of the team's cover; in M3.4-C the acting character will run to it and back (animation only). | One launch point per side (PM request) keeps aiming and the AI simple. | Fire from the actor's slot instead (the Rev 1 design). Needs re-tuning. |
+| **C6** | Characters "attack" | **Interpretation.** Characters attack *through* their team's cannon; the actor's stats set the damage. Since M3.4-A the cannon stands on the ground in front of the team's cover; since M3.4-C the acting character is seen running to it, firing it and running back (animation only: the shot still starts at the cannon). | One launch point per side (PM request) keeps aiming and the AI simple. | Fire from the actor's slot instead (the Rev 1 design). Needs re-tuning. |
 | **C7** | Round limit | **Addition (built in M3.3; changed in M3.4-A).** The course doesn't mention one. A match that reaches the end of round 30 without an elimination is a Draw (a timeout); HP and cover never decide it. | It guarantees that every match ends, including AI-vs-AI test matches. | Raise `ROUND_LIMIT`. Removing it isn't recommended. |
 | **C8** | Battlefield structures | **Addition (M3.4-A; placement screen M3.4-B).** Each team places up to 6 cover blocks on 8 fixed slots before the battle (the computer places its own with the same budget and rules). Blocks stop shots and shield characters from the blast; they never decide the winner. | Gives the artillery game a defensive choice while characters stay the only target that wins. | An empty layout (no blocks) plays as an open field. |
 
@@ -979,10 +1025,13 @@ open (see M3). The original plan follows.
 - **M3.4-B (done, conditionally accepted by the PM; human play-testing pending):** the cover
   placement screen and setup flow (PvAI and PvP, Back, rematch), the computer's cover placement,
   cover-aware AI aiming, `drawing.py`.
-- **M3.4-B.1 (done, awaiting PM review):** Easy's aiming error lowered from 6° / 8 to 4° / 5 (top
+- **M3.4-B.1 (done; the PM approved it as the M3.4-C baseline):** Easy's aiming error lowered from 6° / 8 to 4° / 5 (top
   choices 5 → 4), so Easy matches behind cover usually end in an elimination (§14, "M3.4-B.1
   notes").
-- **Next:** M3.4-C (run-to-cannon animation), only after PM approval.
+- **M3.4-C (done, awaiting PM review; human play-testing pending):** the character-to-cannon
+  animation for people and the computer, `animation.py`, `AIController.carry_out` (§14, "M3.4-C
+  notes").
+- **Next:** M4, only after PM approval.
 
 **Updated in M2.3.**
 - **Required:** Player vs AI.
@@ -1552,7 +1601,7 @@ only: no placement screen, no new AI, no animation.
 **Why one shared cannon:** one launch point per side keeps aiming learnable, keeps the AI's
 search small, and matches the M0 design (C6). In M3.4-C the acting character will run to the
 cannon and back; that animation will not change the physics, because the shot always starts at
-the pivot.
+the pivot. (Built in M3.4-C; see "M3.4-C notes".)
 
 **Placement budget and constraints:** 0–6 blocks on 8 slots, no duplicates, a raised block only
 on a block. `layout_problem()` returns the reason a layout is illegal (or None), and `Castle`
@@ -1582,6 +1631,7 @@ three characters of a team (the old point check exploded a few pixels inside the
 **Turns and animation states:** the turn and round rules are unchanged from M3.3 (an attack turn
 ends when its shot lands). Planned for M3.4-C, drawing only: IDLE -> RUN_TO_CANNON -> FIRE (the
 battle launches the shot) -> RETURN_TO_SLOT -> IDLE, with input locked until the turn ends.
+(Built in M3.4-C as planned; input stays locked until the run is over, see "M3.4-C notes".)
 
 **AI target selection (M3.4-A, interim):** `ai.progress()` now counts only damage to enemy
 characters (and defeats), plus Repair valued as the share of the team's cover HP it restores.
@@ -1865,3 +1915,99 @@ made the same number of decisions.
   half the time.
 - **Easy vs Normal in 1v1** is closer than before (Easy won 13 of 40).
 - **Human feel:** whether the new Easy feels easy to a human has not been play-tested.
+
+### M3.4-C notes (character-to-cannon animation)
+**Brief:** the acting character runs to its team's shared cannon, fires it once and returns to its
+slot, for people and the computer. Visual only: no new mechanics, no change to Battle's rules,
+physics, cover, AI settings, victory or the round limit.
+
+**Preflight (the flow before M3.4-C):** a click on ATTACK / SPACE → `Game.do_action` →
+`Battle.why_not_allowed` → `Battle.perform_action` (the shot is created at the cannon pivot at
+once) → `Battle.update` once per frame → `_end_shot` (explosion, cover, damage, EXP) →
+`_finish_turn` (game over, round limit, or the next team's turn). The computer: `update_ai` waited
+40 frames, then `AIController.take_turn` aimed and called `perform_action` in the same frame.
+**Where the animation goes:** between `do_action` and `perform_action`, in `main.py` only. The
+Battle needed no change: its public API is the same and `battle.py` is untouched.
+
+**States and timing** (`animation.CannonRun`): IDLE → RUN_TO_CANNON (20 frames, 1/3 s) → FIRE
+(12 frames) → RETURN_TO_SLOT (20 frames) → IDLE, counted in frames like the Battle's physics
+(one step per frame at 60 FPS). `step()` returns True on one frame only: the arrival. On that
+frame `Game.fire_pending_shot` calls `perform_action`, and in the same frame `Battle.update`
+moves the shot its first step, as it did when the shot was fired by the click. So the flight is
+step-for-step the same as before (tested against a Battle fired directly), only 20 frames later.
+The runner goes back during the flight; a typical shot lands 60–120 frames after launch, after
+the runner is home.
+
+**The firing spot** is 24 px behind the cannon pivot (x 316 on the left, 964 on the right): a
+28 px figure there fits between the cover (which ends at x 300) and the cannon wheel (from x
+332). The run is a straight line at an even speed from the slot.
+
+**Who does what:** the AI decides *what* (`AIController.choose`), `Game` decides *when*
+(`CannonRun`), and the Battle validates and executes (`perform_action`). `take_turn` was split
+into `choose` + `carry_out`, and `take_turn` still does both, so the AI tests and benchmarks are
+unchanged (a test checks that the split plays exactly the same turn for every difficulty).
+`carry_out` checks `why_not_allowed` before it turns the cannon, so a refused plan changes
+nothing. In the game, the computer turns its cannon when it decides (so the barrel moves while
+its character runs) and its plan is carried out on arrival. Defend, Rally and Repair are carried
+out at once by people and by the computer.
+
+**Input and restart safety:**
+- `Game.controls_locked()` is True during a run, a flight, after the game ends and on the
+  computer's turn. It greys the buttons and blocks the battle keys (aim, 1–3, SPACE). `do_action`
+  and `click_battle` also refuse during a run (defence in depth), so a second click, SPACE in
+  the same frame or DEFEND can't add an action.
+- The Battle may pass the turn before the runner is home (only very short shots land within 32
+  frames of launch). The next team, and the computer's 40-frame pause, start only when the run is
+  IDLE.
+- R, Rematch, a new match, Change teams and quitting call `CannonRun.cancel()`. A cancelled run
+  never fires: before arrival nothing has reached the Battle, and after arrival `Battle.reset`
+  removes the shot as before.
+- If the match ends while the runner walks back (in play only through the round limit after a
+  short last shot: a winning shot always lands after the runner is home), the run finishes behind
+  the result screen in at most 32 frames.
+- A runner that is somehow defeated (not possible in play) is dropped at once and drawn as
+  defeated in its slot, so no figure is left behind.
+
+**Drawing:** `draw_running_figure` (body lifted 6 px, two legs that swap with a 2 px bob every 5
+frames) and `draw_firing_figure` (an arm stretched to the cannon), facing the cannon on the way
+there and the slot on the way back. The muzzle flash (yellow centre, orange edge, shrinking) is
+drawn at the barrel tip during FIRE, which begins on the launch frame. The runner is drawn instead
+of the standing figure, never as well; its name, HP bar and cooldown stay over its slot (where
+the Battle keeps it), and its selection marker is hidden while it runs. The cannon never moves.
+
+**Tests:** `tests/test_animation.py` (new, no Pygame): the state sequence and frame counts, exactly
+one fire frame, cancel, straight-line positions halfway there and back, facing, the firing spot
+between cover and cannon on both sides, `fires_the_cannon` against each role's real
+`use_special`, and that the rule modules don't import the animation. `tests/test_main.py`
+CannonRunTest and ComputerCannonRunTest cover the PM's list (see the M3.4-C report). Existing
+tests that expected a shot right after the click now run the frames to the cannon first
+(`run_to_cannon`), and `finish_shot` waits for the runner too; no rule assertion was weakened.
+Mutation check: 16 defects were injected one at a time into a scratch copy (fire at the click,
+fire twice, no input lock while walking back, the computer skipping the run or starting early,
+R / Change teams / Esc not cancelling, a duplicate figure, the flash at the wrong time, wrong
+facing, a defeated runner firing, Defend taking the run, the wrong start slot, a changed aim, and
+`carry_out` accepting a refused plan). 15 were caught at first; the missed one (the run always
+starting from slot 0) led to a new assertion, which catches it. Full suite after M3.4-C: 330
+tests (292 before: +16 `test_animation`, +20 `test_main`, +2 `test_ai`); with Pygame all 330
+pass; without Pygame 224 pass and the 106 `test_main` tests are skipped.
+
+**Scripted visual check** (headless, the real `Game`; screenshots and 3× zooms): a person's attack
+from slot 3 (the longest run), RIGHT's attack in two-player mode, an Archer Power Shot, the
+computer's attack, R during a run, a game won by a shot, and the round limit ending the match
+while the runner walks back. Every frame was checked automatically (the number of figure bodies
+drawn equals the living characters, the runner is drawn where `actor_x()` says and not in its
+slot, the hit boxes never change): no problems once the next attack waited for the previous
+explosion. An explosion is drawn over everything for 1/3 s (unchanged since M1), so a runner who
+starts within 1/3 s of the previous impact passes behind it. **Real window:** posted Windows mouse
+and keyboard messages (a real game loop at 60 FPS): a mouse ATTACK started the run; an extra
+click, SPACE and DEFEND during the run added nothing; the computer's attack took the run; R
+mid-run reset the match; Esc closed the game. Frames with a run took 1.5 ms median and at most
+4.8 ms of the 16.7 ms budget (the computer's decision frame, about 0.15 s, is unchanged from M3.4-B).
+
+**Limitations (deliberate):**
+- Straight-line motion with no collision, jumping or path-finding, so the runner passes in front
+  of the cover and of team-mates nearer the cannon (it is drawn after them).
+- Each attack turn is 1/3 s longer (the run before the shot).
+- The name and HP bar don't follow the runner.
+- No sprites, sound, particles or screen shake.
+- Human play-testing of the look and feel is pending.

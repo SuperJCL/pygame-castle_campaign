@@ -199,6 +199,37 @@ class TurnRulesTest(unittest.TestCase):
             self.assertEqual((cannon.angle, cannon.power), (plan.angle, plan.power))
         self.assertEqual(battle.active_side, "left")              # exactly one action, then left's turn
 
+    def test_choose_then_carry_out_does_exactly_what_take_turn_does(self):
+        # M3.4-C: the game chooses first and carries the plan out when the character has
+        # reached the cannon. Split like that, a turn must stay the same as take_turn.
+        for difficulty in DIFFICULTY_SETTINGS:
+            for seed in range(4):
+                with self.subTest(difficulty=difficulty, seed=seed):
+                    whole, split = (right_to_move([Knight, Engineer], [Archer, Engineer]) for _ in range(2))
+                    for battle in (whole, split):
+                        battle.castles["right"].blocks[1].take_damage(40)     # so Repair is possible
+                        battle.take_events()
+                    plan = AIController("right", difficulty, seed=seed).take_turn(whole)
+                    ai = AIController("right", difficulty, seed=seed)
+                    before = snapshot(split)
+                    chosen = ai.choose(split)
+                    self.assertEqual(snapshot(split), before)                       # nothing done yet
+                    self.assertIs(ai.carry_out(split, chosen), chosen)
+                    self.assertEqual((chosen.actor_index, chosen.action, chosen.angle, chosen.power),
+                                     (plan.actor_index, plan.action, plan.angle, plan.power))
+                    self.assertEqual(fly(split), fly(whole))
+                    self.assertEqual(snapshot(split), snapshot(whole))
+                    self.assertEqual(ai.defended_last_turn, chosen.defensive)
+
+    def test_carry_out_refuses_a_plan_that_is_no_longer_allowed(self):
+        battle = right_to_move([Knight], [Archer])
+        ai = AIController("right", "hard", seed=1)
+        plan = ai.choose(battle)
+        battle.teams["right"].characters[plan.actor_index].take_damage(500)   # the actor fell meanwhile
+        before = snapshot(battle)
+        self.assertIsNone(ai.carry_out(battle, plan))
+        self.assertEqual(snapshot(battle), before)
+
 
 class CharacterChoiceTest(unittest.TestCase):
     def test_the_ai_only_chooses_living_characters(self):

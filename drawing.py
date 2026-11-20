@@ -1,7 +1,8 @@
 """Shared look of the Castle Siege screens: colours, text, character figures and buttons.
 
 Moved out of main.py unchanged in M3.4-B, so main.py can stay focused on the screens and
-their input. Uses Pygame, so (like main.py) it is not imported by the game-rule modules.
+their input. M3.4-C added the running and firing poses. Uses Pygame, so (like main.py) it
+is not imported by the game-rule modules.
 """
 import math
 
@@ -36,6 +37,9 @@ BUTTON_COLOR = (70, 95, 130)
 BUTTON_CHOSEN = (225, 170, 40)
 BUTTON_OFF = (95, 98, 105)
 OPEN_SLOT_COLOR = (226, 240, 252)   # an empty cover slot that can take a block
+FLASH_COLOR = (255, 236, 120)       # the muzzle flash (M3.4-C): a yellow centre ...
+FLASH_EDGE = (255, 150, 40)         # ... with an orange edge
+RUN_LIFT = 6                        # a running figure is drawn this much higher, so its legs show
 
 
 def block_color(side, hp, max_hp):
@@ -99,6 +103,24 @@ def draw_figure(screen, role, center_x, top, facing, body_color):
                          border_top_left_radius=7, border_top_right_radius=7)           # hard hat
         pygame.draw.line(screen, WOOD, (front, top + 20), (front, top + 40), 3)          # hammer
         pygame.draw.rect(screen, STEEL, (front - 5, top + 16, 10, 6))
+
+
+def draw_running_figure(screen, role, center_x, top, facing, body_color, frame):
+    """A figure running to or from the cannon (M3.4-C). `top` is where the standing figure's
+    top would be. The body is lifted a little so two legs show under it; every 5 frames the
+    legs swap and the body bobs up or down 2 px."""
+    phase = (frame // 5) % 2
+    stride = 5 if phase else -5
+    ground = top + 44
+    for hip_x, step in ((center_x - 3, stride), (center_x + 3, -stride)):
+        pygame.draw.line(screen, TEXT_COLOR, (hip_x, ground - 12), (hip_x + step, ground - 1), 3)
+    draw_figure(screen, role, center_x, top - RUN_LIFT - 2 * phase, facing, body_color)
+
+
+def draw_firing_figure(screen, role, center_x, top, facing, body_color):
+    """A figure firing the cannon (M3.4-C): standing, one arm stretched out to the cannon."""
+    draw_figure(screen, role, center_x, top, facing, body_color)
+    pygame.draw.line(screen, SKIN, (center_x + facing * 6, top + 19), (center_x + facing * 17, top + 26), 3)
 
 
 class Button:

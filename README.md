@@ -6,7 +6,7 @@ stands behind its own cover blocks and shares one cannon standing in front of th
 teams take turns: pick a character, aim the cannon, and Attack, Defend or use a Special ability.
 **You win by defeating every enemy character.**
 
-**Current status: Milestone 3.4-B — cover placement and a cover-aware computer opponent.**
+**Current status: Milestone 3.4-C — the characters run to the shared cannon.**
 - Only elimination wins. Castle destruction is not a victory condition.
 - Before each battle, every team places its own cover: up to 6 blocks on 8 fixed slots. Against
   the computer you place the LEFT cover and the computer places its own.
@@ -14,7 +14,8 @@ teams take turns: pick a character, aim the cannon, and Attack, Defend or use a 
   characters.
 - M3.4-B.1: the Easy computer aims a little better (4° / 5 instead of 6° / 8). Before that, most
   Easy-vs-Easy 3v3 matches ran out of rounds without a winner.
-- The characters' run to the cannon is planned for M3.4-C.
+- M3.4-C: an attacking character runs to its team's cannon, fires it and runs back (see
+  *The run to the cannon* below). It is a visual effect only: no rule changed.
 
 You play the LEFT team against a computer opponent (Easy, Normal or Hard), or two people play
 each other on one computer. The design and roadmap are in [docs/M0_design.md](docs/M0_design.md).
@@ -89,7 +90,8 @@ In VS Code you can also pick the `.venv` interpreter (**Python: Select Interpret
    - **Aim** with the arrow keys (the orange arrow; longer means more power).
    - **Act:**
      - **ATTACK** (or **SPACE**) fires your team's cannon with that aim and the chosen
-       character's stats.
+       character's stats. The character first runs to the cannon; the shot leaves when it gets
+       there, and it runs back while the shot flies.
      - **DEFEND** halves the damage that character takes until your next turn, and also halves
        the damage enemy shots do to your cover blocks (**Cover Guard**).
      - **SPECIAL** uses its ability. A greyed-out button can't be used right now, and the panel
@@ -98,7 +100,7 @@ In VS Code you can also pick the `.venv` interpreter (**Python: Select Interpret
    On the computer's turn the buttons are greyed out. After a short pause it chooses a character
    and an action by itself. The combat log shows its choice (e.g. "AI (Normal): Archer attacks
    the LEFT Knight." or "AI (Hard): Engineer attacks the cover in front of the LEFT Knight.") and
-   what happened.
+   what happened. Its attacks take the same run to the cannon as yours.
 4. **Result.** The result screen shows the winner, or DRAW, why the match ended and how many
    rounds were played.
    - Choose **Rematch** (same teams, both covers, same computer level; every character and block
@@ -123,7 +125,8 @@ In VS Code you can also pick the `.venv` interpreter (**Python: Select Interpret
 | R | Rematch: restart with the same teams and cover (the side that moves first swaps) |
 | Esc | Quit |
 
-Holding an arrow key keeps changing the value. SPACE acts once per press.
+Holding an arrow key keeps changing the value. SPACE acts once per press. While a character
+runs to the cannon and back, the combat keys and buttons do nothing (R and Esc still work).
 
 **If the keys don't respond:** click once inside the game window, so it has keyboard focus.
 Chinese and other input methods (IMEs) are turned off inside the game window, so you don't need
@@ -196,10 +199,40 @@ to switch the keyboard to English first.
   (`docs/M3.2_balance_report.md`). That benchmark measured the old castle rules, so its numbers
   don't apply to M3.4. Not yet confirmed by human play-testing.
 
+## The run to the cannon (M3.4-C)
+- **One shared cannon per team.** Every character of a team attacks through the same cannon,
+  which stands in front of the team's cover. The shot always starts at the cannon, and its
+  damage uses the stats of the character who fired it.
+- **The animation.** When you choose ATTACK (or the Archer's Power Shot), the character runs from
+  its slot to the cannon (1/3 s), fires it with a short muzzle flash (1/5 s), and runs back
+  (1/3 s) while the shot flies. The shot is fired exactly once, on the frame the character
+  reaches the cannon; the flash starts on that same frame. Defend, Rally and Repair still happen
+  at once, without a run.
+- **Positions and hit boxes don't move.** The Battle (`battle.py`) keeps every character in its
+  slot. Only the drawing moves: the name, HP bar and cooldown stay over the slot, and nothing can
+  hit the runner, because the enemy can't act until it is back. So the animation can never change
+  a collision, the damage or the flight of a shot.
+- **The Battle still runs the turn.** The turn ends when the shot lands and the Battle applies
+  its damage, as before. If the shot lands before the character is back (a very short shot), the
+  next team waits: its buttons and keys, and the computer, start only when the character is back
+  in its slot.
+- **The computer uses the same run.** It decides what to do (`AIController.choose`), turns its
+  cannon, and its character runs to the cannon; the plan is carried out
+  (`AIController.carry_out`, which calls `Battle.perform_action`) only when the character gets
+  there. The computer's aim and choices are unchanged.
+- **R and Esc stay instant.** R during a run cancels it and restarts the match as before (the
+  side that moves first swaps), and nothing is fired later. A new match, Change teams and
+  quitting also stop a run. If the match ends while a character is still running back, it
+  finishes behind the result screen.
+- **Simplified on purpose:** the run is a straight line at an even speed, with no collision,
+  jumping or path-finding, so a runner passes in front of the cover and of team-mates nearer the
+  cannon. Legs swap and the body bobs every 5 frames; the cannon itself never moves. Drawn only
+  with Pygame shapes (no sprite images).
+
 ## The computer opponent (`ai.py`)
 - It plays by the same rules as you: it can only act through the same `Battle.perform_action()`
   that the buttons use, so it can't use a special that is recharging, act with a defeated
-  character, or act out of turn.
+  character, or act out of turn. Its attacks take the same run to the cannon as yours (M3.4-C).
 - **Its cover:** before the battle it builds a two-block tower on the slots next to its
   characters, where enemy shots come down on its front character, then places its other 4 blocks
   one at a time on random slots where a block is allowed. The same 6-block budget and the same
@@ -235,27 +268,28 @@ From the project folder:
 ```
 python -m unittest discover tests
 ```
-- The tests for the game logic (`castle.py`, `battle.py`, `characters.py`) and for the computer
-  opponent (`ai.py`) don't need Pygame. The AI tests use fixed random seeds, so every run gives
-  the same results.
+- The tests for the game logic (`castle.py`, `battle.py`, `characters.py`), the computer
+  opponent (`ai.py`) and the run's timing and positions (`animation.py`) don't need Pygame. The
+  AI tests use fixed random seeds, so every run gives the same results.
 - The tests in `tests/test_main.py` (screens, buttons, keyboard and mouse handling, window setup)
   need Pygame. They are skipped if it isn't installed, and they never open a visible window.
 
 ## Project layout
 | File | Purpose |
 |---|---|
-| `main.py` | Pygame window, screens (team selection, cover placement, battle, result), buttons, mouse and keyboard input, the computer's turn, drawing and the main loop |
-| `drawing.py` | The screens' shared look: colours, text, character figures and buttons (moved out of `main.py` in M3.4-B; with `main.py`, the only files that use Pygame) |
+| `main.py` | Pygame window, screens (team selection, cover placement, battle, result), buttons, mouse and keyboard input, the computer's turn, when an attack is fired (after the run), drawing and the main loop |
+| `drawing.py` | The screens' shared look: colours, text, character figures (standing, running, firing) and buttons (moved out of `main.py` in M3.4-B; with `main.py`, the only files that use Pygame) |
+| `animation.py` | `CannonRun` (M3.4-C): the states and frames of a character's run to the cannon and back, and where to draw it; no Pygame, never changes the Battle |
 | `ai.py` | `AIController`: the computer opponent (team and cover choice, Defend / Attack / Special choice, cover-aware aiming) and its difficulty table |
 | `battle.py` | Cannons, projectile physics, collision along the flight path, explosions and cover, turns, the round limit and victory; `Team` and team combat (Attack / Defend / Special); `path_contacts` for the computer's planning |
 | `castle.py` | `Block`, the 8 cover slots, the layout rules (`layout_problem`) and the placement clicks (`place_block`, `remove_block`), and `Castle` (one team's cover): damage and repair |
 | `characters.py` | `Character` base class with `Knight`, `Archer`, `Engineer`: HP/ATK/DEF, damage, defend, cooldowns, EXP, levels and each role's special ability |
-| `tests/` | `unittest` tests for `castle.py`, `battle.py` (physics and collision), team combat and cover (`test_combat.py`), `characters.py`, `ai.py` and `main.py` |
+| `tests/` | `unittest` tests for `castle.py`, `battle.py` (physics and collision), team combat and cover (`test_combat.py`), `characters.py`, `ai.py`, `animation.py` and `main.py` |
 | `docs/M0_design.md` | Design: rules, architecture, roadmap (the latest decisions at the top) |
 | `docs/M3.1_balance_analysis.md` | M3.1 analysis of Defend and Repair (recommendations only, nothing changed) |
 | `docs/M3.2_balance_report.md` | M3.2 balance experiment under the old castle rules (historical; its script is in commit `86b90fa`) |
 | `docs/M3.2_benchmark_results.md`, `docs/M3.2_benchmark_results_easy.md` | That benchmark's generated result tables (historical) |
-| `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules (updated for M3.4-B) |
+| `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules (updated for M3.4-C) |
 | `docs/Rebound_reference_review.md` | Review of a reference project (ideas only) |
 
 ## References

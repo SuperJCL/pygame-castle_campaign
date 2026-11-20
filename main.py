@@ -19,23 +19,29 @@ Two players: both teams play on this computer and take turns ("hot seat").
 All game rules live in battle.py, castle.py and characters.py: this file reads
 the mouse and keyboard, calls Battle methods and draws what the Battle reports.
 
+An attack (ATTACK or Power Shot, by a person or the computer) is not fired at once (M3.4-C):
+the character first runs to its team's cannon (animation.py), the shot is fired with
+Battle.perform_action() when it gets there, and it runs back while the shot flies. Combat
+input and the computer wait until it is back. Defend, Rally and Repair still happen at once.
+
 Run from the project folder:   python main.py
 """
 import math
 
 import pygame
 
-from ai import DIFFICULTY_SETTINGS, AIController
+from ai import DIFFICULTY_SETTINGS, AIController, aim_cannon
+from animation import FIRE, FIRE_FRAMES, RUN_TO_CANNON, CannonRun, PendingShot, fires_the_cannon
 from battle import (BLAST_RADIUS, CHARACTER_HEIGHT, FIELD_WIDTH, MAX_TEAM_SIZE, ROUND_LIMIT, SLOT_X,
                     Battle, Cannon, direction, other_side)
 from castle import (BLOCK_SIZE, COLUMN_X, DEFAULT_LAYOUT, GROUND_Y, MAX_BLOCKS, SLOT_COUNT,
                     layout_problem, place_block, remove_block, slot_position)
 from characters import ARCHETYPES, MAX_LEVEL, Archer
 from drawing import (ACTIVE_RING_COLOR, AIM_COLOR, CANNON_COLOR, COOLDOWN_COLOR, DEFEATED_COLOR,
-                     DEFEND_COLOR, DIM_TEXT, GROUND_COLOR, GUARD_COLOR, LIGHT_TEXT, MENU_COLOR,
-                     OPEN_SLOT_COLOR, PANEL_COLOR, READY_COLOR, SHOT_COLOR, SKY_COLOR, TEAM_COLORS,
-                     TEXT_COLOR, WOOD, Button, block_color, draw_figure, draw_text, hp_bar_width,
-                     wrap_text)
+                     DEFEND_COLOR, DIM_TEXT, FLASH_COLOR, FLASH_EDGE, GROUND_COLOR, GUARD_COLOR,
+                     LIGHT_TEXT, MENU_COLOR, OPEN_SLOT_COLOR, PANEL_COLOR, READY_COLOR, SHOT_COLOR,
+                     SKY_COLOR, TEAM_COLORS, TEXT_COLOR, WOOD, Button, block_color, draw_figure,
+                     draw_firing_figure, draw_running_figure, draw_text, hp_bar_width, wrap_text)
 
 WINDOW_WIDTH = FIELD_WIDTH        # 1280
 WINDOW_HEIGHT = 720
@@ -65,6 +71,13 @@ def guard_badge_rect(side):
     badge = pygame.Rect(0, 0, 84, 20)
     badge.center = (center_x, GROUND_Y - 2 * BLOCK_SIZE - 20)       # y 476: above the raised row
     return badge
+
+
+def muzzle_point(cannon):
+    """Centre of the muzzle flash: just past the tip of the 24 px barrel, along its angle."""
+    radians = math.radians(cannon.angle)
+    return (round(cannon.x + direction(cannon.side) * 30 * math.cos(radians)),
+            round(cannon.y - 30 * math.sin(radians)))
 
 
 def describe_event(event):
@@ -218,6 +231,7 @@ class Game:
         self.battle = None
         self.ai = None                # the AIController playing RIGHT, or None (two players)
         self.ai_wait = 0              # frames the computer has waited on this turn
+        self.cannon_run = CannonRun()  # an attacking character's run to the cannon and back (M3.4-C)
         self.selected = {"left": 0, "right": 0}   # slot of the character chosen to act
         self.explosions = []          # each one is [x, y, age in frames]
         self.log = []                 # combat-log lines, newest last
@@ -272,6 +286,7 @@ class Game:
 
     def begin_match(self):
         self.state = "battle"
+        self.cannon_run.cancel()          # a rematch (R) mid-run: nothing is fired later
         self.selected = {"left": 0, "right": 0}
         self.ai_wait = 0
         self.explosions = []
@@ -335,6 +350,12 @@ class Game:
         return (self.state == "battle" and self.ai is not None
                 and self.battle.active_side == self.ai.side and self.battle.can_fire())
 
+    def controls_locked(self):
+        """True while nobody may aim or act in the battle: a character is running to or from
+        the cannon (M3.4-C), a shot is flying, the game is over, or it is the computer's turn."""
+        return (self.state != "battle" or self.cannon_run.is_busy() or not self.battle.can_fire()
+                or self.is_ai_turn())
+
     # ----- the character who acts --------------------------------------------------
 
     def selected_index(self):
@@ -366,19 +387,65 @@ class Game:
         self.message = f"{character.name} is ready. Aim, then choose an action."
 
     def do_action(self, action):
-        """Ask the Battle to carry out an action for the chosen character."""
+        """Ask the Battle to carry out an action for the chosen character.
+
+        ATTACK and Power Shot first send the character to the cannon (start_cannon_run): the
+        shot is fired when it gets there. Defend, Rally and Repair happen at once."""
+        if self.cannon_run.is_busy():
+            return                        # one action per turn: a character is already on its way
         index = self.selected_index()
         reason = self.battle.why_not_allowed(index, action)
         if reason is not None:
             self.message = reason
             return
-        self.battle.perform_action(index, action)
+        side = self.battle.active_side
+        if fires_the_cannon(self.battle.teams[side].characters[index], action):
+            cannon = self.battle.cannons[side]
+            self.start_cannon_run(PendingShot(side, index, action, cannon.angle, cannon.power))
+        else:
+            self.battle.perform_action(index, action)
+
+    # ----- the run to the cannon (M3.4-C) -------------------------------------------
+
+    def start_cannon_run(self, shot):
+        """Send the character of `shot` (a PendingShot) from its slot to the cannon. The
+        controls stay locked until it is back; nothing is fired yet."""
+        team = self.battle.teams[shot.side]
+        self.cannon_run.start(shot, team.slot_center(shot.actor_index)[0])
+        self.message = f"{shot.side.upper()} {team.characters[shot.actor_index].name} runs to the cannon..."
+
+    def update_cannon_run(self):
+        """One frame of the run. On the frame the character reaches the cannon, the one real
+        shot of this attack is fired (fire_pending_shot)."""
+        shot = self.cannon_run.shot
+        if not self.battle.teams[shot.side].characters[shot.actor_index].is_alive():
+            self.cannon_run.cancel()      # not possible in play, but never leave a ghost runner
+            return
+        if self.cannon_run.step():
+            self.fire_pending_shot(shot)
+
+    def fire_pending_shot(self, shot):
+        """Fire the shot the character carried to the cannon, through the Battle like every
+        action. The computer's plan is carried out by its AIController (it aims, then calls
+        Battle.perform_action); a person's shot uses the aim it had when the action was chosen."""
+        if shot.plan is not None:
+            fired = self.ai.carry_out(self.battle, shot.plan) is not None
+        else:
+            aim_cannon(self.battle.cannons[shot.side], shot.angle, shot.power)
+            fired = self.battle.perform_action(shot.actor_index, shot.action)
+        if not fired:
+            self.cannon_run.cancel()      # not possible in play; the log says why it was refused
 
     # ----- input -------------------------------------------------------------------
 
+    def quit(self):
+        """Esc or closing the window: stop the main loop, and any run with it."""
+        self.cannon_run.cancel()
+        self.running = False
+
     def handle_event(self, event):
         if event.type == pygame.QUIT:
-            self.running = False
+            self.quit()
         elif event.type == pygame.KEYUP and event.key == pygame.K_SPACE:
             self.space_released = True
         elif event.type == pygame.KEYDOWN:
@@ -388,7 +455,7 @@ class Game:
 
     def handle_key(self, key, mods):
         if key == pygame.K_ESCAPE:
-            self.running = False
+            self.quit()
         elif self.state == "select":
             if key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                 self.try_start()
@@ -398,8 +465,8 @@ class Game:
             elif key == pygame.K_BACKSPACE:
                 self.back_from_cover()
         elif key == pygame.K_r:
-            self.rematch()
-        elif self.state == "battle" and self.battle.can_fire() and not self.is_ai_turn():
+            self.rematch()                # also cancels a run (begin_match)
+        elif not self.controls_locked():
             self.handle_battle_key(key, mods)
         self.refresh_buttons()
 
@@ -435,6 +502,7 @@ class Game:
         elif self.rematch_button.is_clicked(pos):
             self.rematch()
         elif self.change_teams_button.is_clicked(pos):
+            self.cannon_run.cancel()      # a character may still be walking back
             self.state = "select"
             self.message = "Change the teams, then press PLACE COVER."
         self.refresh_buttons()
@@ -462,6 +530,8 @@ class Game:
             self.try_start()                       # explains what is missing if incomplete
 
     def click_battle(self, pos):
+        if self.cannon_run.is_busy():
+            return                                 # wait until the character is back in its slot
         if self.is_ai_turn():
             self.message = "The computer is playing the RIGHT team's turn."
             return
@@ -494,13 +564,15 @@ class Game:
         if self.battle is not None:
             index = self.selected_index()
             for action, button in self.action_buttons.items():
-                button.enabled = (self.state == "battle" and not self.is_ai_turn()
+                button.enabled = (not self.controls_locked()
                                   and self.battle.why_not_allowed(index, action) is None)
 
     # ----- update ------------------------------------------------------------------
 
     def update(self):
-        if self.is_ai_turn():
+        if self.cannon_run.is_busy():
+            self.update_cannon_run()      # the controls and the computer wait for it
+        elif self.is_ai_turn():
             self.update_ai()
         if self.battle is not None and self.state in ("battle", "result"):
             self.battle.update()
@@ -513,16 +585,26 @@ class Game:
 
     def update_ai(self):
         """On the computer's turn: wait AI_DELAY_FRAMES (so the player can see the turn
-        change), then let the AIController act. Its action goes through the same
-        Battle.perform_action() as the buttons, and its events are shown as usual."""
+        change), then let the AIController choose. Defend, Rally and Repair are carried out
+        at once. An attack or Power Shot takes the same run to the cannon as a person's and is
+        carried out (AIController.carry_out -> Battle.perform_action) when the character gets
+        there. Its events are shown as usual."""
         self.ai_wait += 1
         if self.ai_wait < AI_DELAY_FRAMES:
             return
         self.ai_wait = 0
-        plan = self.ai.take_turn(self.battle)
-        if plan is not None:
-            self.selected[self.ai.side] = plan.actor_index         # the panel shows who acted
-            self.log = (self.log + [f"AI ({self.ai.difficulty.capitalize()}): {plan.reason}."])[-50:]
+        plan = self.ai.choose(self.battle)
+        if plan is None:
+            return
+        self.selected[self.ai.side] = plan.actor_index             # the panel shows who acts
+        self.log = (self.log + [f"AI ({self.ai.difficulty.capitalize()}): {plan.reason}."])[-50:]
+        if plan.fires_a_shot():
+            # The barrel turns to the aim now, while the character runs; the shot waits for it.
+            aim_cannon(self.battle.cannons[self.ai.side], plan.angle, plan.power)
+            self.start_cannon_run(PendingShot(self.ai.side, plan.actor_index, plan.action,
+                                              plan.angle, plan.power, plan))
+        else:
+            self.ai.carry_out(self.battle, plan)
 
     def show_event(self, event):
         """React to one battle event: effects, the log, and the end of the game."""
@@ -553,6 +635,8 @@ class Game:
             status = "Defending until your next turn."
         elif self.ai is not None and self.battle.active_side == self.ai.side:
             status = "Played by the computer."
+        elif self.cannon_run.is_busy():
+            status = self.cannon_run_text()      # the controls wait for the runner
         else:
             status = "Click a character or press 1-3 to choose who acts."
         stats = (f"HP {character.hp}/{character.max_hp}   ATK {character.atk}   "
@@ -566,6 +650,8 @@ class Game:
         character = self.selected_character()
         if self.battle.is_over():
             return ["The game is over: choose Rematch or Change teams."]
+        if self.cannon_run.is_busy() and self.battle.projectile is None:
+            return [self.cannon_run_text()]
         if self.is_ai_turn():
             return [f"The computer ({self.ai.difficulty.capitalize()}) is choosing the RIGHT team's move..."]
         lines = [f"Aim: angle {cannon.angle}°, power {cannon.power}  (arrow keys, Shift = 5)"]
@@ -582,6 +668,14 @@ class Game:
         else:
             lines.append("ATTACK fires with this aim. SPACE = ATTACK.")
         return lines
+
+    def cannon_run_text(self):
+        """The panel line while a character runs to the cannon or back to its slot."""
+        shot = self.cannon_run.shot
+        name = f"{shot.side.upper()} {self.battle.teams[shot.side].characters[shot.actor_index].name}"
+        if self.cannon_run.state == RUN_TO_CANNON:
+            return f"{name} runs to the cannon to fire..."
+        return f"{name} runs back to its place..."
 
     def result_title(self):
         if self.battle.winner == "draw":
@@ -795,6 +889,8 @@ class Game:
         self.draw_characters()
         for side, cannon in self.battle.cannons.items():
             self.draw_cannon(cannon, is_active=(side == self.battle.active_side))
+        if self.cannon_run.state == FIRE:            # starts on the frame the shot is launched
+            self.draw_muzzle_flash(self.battle.cannons[self.cannon_run.shot.side])
         if self.battle.can_fire():
             self.draw_aim_arrow(self.battle.cannons[self.battle.active_side])
         if self.battle.projectile is not None:
@@ -817,7 +913,8 @@ class Game:
         draw_text(self.screen, "GUARDED", self.tiny_font, (255, 255, 255), center=badge.center)
 
     def draw_characters(self):
-        """Each character at its Team slot, with its name, HP bar and special cooldown."""
+        """Each character at its Team slot, with its name, HP bar and special cooldown. A
+        character running to or from the cannon is drawn where it runs instead (draw_runner)."""
         acting_side = self.battle.active_side
         chosen = self.selected_index() if self.state == "battle" else None
         for side, team in self.battle.teams.items():
@@ -825,14 +922,18 @@ class Game:
                 rect = pygame.Rect(team.character_rect(index))
                 # Neighbours stand 45 px apart, so the middle slot's label sits higher.
                 label_y = rect.top - 30 - (24 if index == 1 else 0)
+                running = character.is_alive() and self.cannon_run.moves(side, index)
                 if character.is_alive():
                     if character.is_defending:
                         bubble = pygame.Surface((64, 64), pygame.SRCALPHA)
                         pygame.draw.circle(bubble, DEFEND_COLOR + (90,), (32, 32), 31)
                         pygame.draw.circle(bubble, DEFEND_COLOR + (220,), (32, 32), 31, 2)
                         self.screen.blit(bubble, bubble.get_rect(center=rect.center))
-                    draw_figure(self.screen, type(character), rect.centerx, rect.top,
-                                direction(side), TEAM_COLORS[side])
+                    if running:
+                        self.draw_runner(type(character), side, rect.top)
+                    else:
+                        draw_figure(self.screen, type(character), rect.centerx, rect.top,
+                                    direction(side), TEAM_COLORS[side])
                     name_color = TEAM_COLORS[side]
                 else:
                     # Defeated: a grey shape lying on the ground.
@@ -852,12 +953,31 @@ class Game:
                     else:
                         draw_text(self.screen, "ready", self.tiny_font, READY_COLOR,
                                   center=(rect.centerx, GROUND_Y + 10))
-                if side == acting_side and index == chosen and character.is_alive():
+                if side == acting_side and index == chosen and character.is_alive() and not running:
                     pygame.draw.rect(self.screen, ACTIVE_RING_COLOR, rect.inflate(8, 8), 2)
                     tip_y = label_y - 10
                     pygame.draw.polygon(self.screen, ACTIVE_RING_COLOR,
                                         [(rect.centerx - 7, tip_y - 10), (rect.centerx + 7, tip_y - 10),
                                          (rect.centerx, tip_y)])
+
+    def draw_runner(self, role, side, top):
+        """The attacking character on its way to the cannon, firing it, or on its way back.
+        Only the figure moves: its name, HP bar and cooldown stay over its slot, where the
+        Battle keeps the character (and where a shot could hit it)."""
+        run = self.cannon_run
+        x = round(run.actor_x())
+        if run.state == FIRE:
+            draw_firing_figure(self.screen, role, x, top, run.facing(), TEAM_COLORS[side])
+        else:
+            draw_running_figure(self.screen, role, x, top, run.facing(), TEAM_COLORS[side], run.frame)
+
+    def draw_muzzle_flash(self, cannon):
+        """A short flash at the barrel's tip while the shot leaves it, shrinking over FIRE_FRAMES.
+        The cannon itself never moves."""
+        radius = round(12 - 7 * self.cannon_run.frame / FIRE_FRAMES)
+        center = muzzle_point(cannon)
+        pygame.draw.circle(self.screen, FLASH_EDGE, center, radius)
+        pygame.draw.circle(self.screen, FLASH_COLOR, center, max(2, radius // 2))
 
     def draw_cannon(self, cannon, is_active):
         # A wheel on the ground under the pivot; the barrel points along the cannon's angle.

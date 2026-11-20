@@ -40,8 +40,12 @@ from characters import ARCHETYPES, Archer, Engineer, Knight, calculate_damage
 #   special_chance            chance per turn that Rally, Power Shot and Repair are considered at all
 #   defend_chance             chance to Defend when every character has at least half its HP
 #   hurt_defend_chance        chance to Defend when a character is below half its HP
+# Easy aimed with 6 / 8 / 5 until M3.4-B.1. With cover that error was wider than the gap in
+# which a shot can reach a character, so even Easy's best aim damaged one only about 4 times in
+# 10, and most Easy-vs-Easy 3v3 matches ran out of rounds. 4 / 5 / 4 still misses far more than
+# Normal (docs/M0_design.md, "M3.4-B.1 notes").
 DIFFICULTY_SETTINGS = {
-    "easy": {"angle_error": 6, "power_error": 8, "top_choices": 5,
+    "easy": {"angle_error": 4, "power_error": 5, "top_choices": 4,
              "special_chance": 0.25, "defend_chance": 0.10, "hurt_defend_chance": 0.40},
     "normal": {"angle_error": 3, "power_error": 4, "top_choices": 3,
                "special_chance": 0.50, "defend_chance": 0.05, "hurt_defend_chance": 0.50},

@@ -346,7 +346,8 @@ class CoverAwarenessTest(unittest.TestCase):
 
     def test_the_ai_reaches_and_defeats_a_protected_character_in_time(self):
         # LEFT (the AI) against a lone Knight behind the full default cover that never shoots back.
-        for difficulty in ("normal", "hard"):
+        # Easy too since M3.4-B.1 (it won in all 20 seeds tried, in 12-27 rounds).
+        for difficulty in DIFFICULTY_SETTINGS:
             with self.subTest(difficulty=difficulty):
                 battle = combat([Knight], [Knight], layouts={"left": (), "right": DEFAULT_LAYOUT})
                 ai = AIController("left", difficulty, seed=11)
@@ -467,10 +468,13 @@ class AccuracyTest(unittest.TestCase):
         self.assertGreaterEqual(shots, trials * 3 // 4)
         return hits / shots
 
-    def test_hard_hits_more_often_than_easy(self):
-        easy, hard = self.hit_rate("easy"), self.hit_rate("hard")
-        self.assertGreater(hard, easy + 0.25, (easy, hard))
-        self.assertLess(hard, 1.0, (easy, hard))                    # not perfectly accurate
+    def test_each_level_hits_more_often_than_the_one_below(self):
+        # M3.4-B.1 made Easy more accurate; it must still clearly miss more than Normal.
+        easy, normal, hard = (self.hit_rate(d, trials=40) for d in ("easy", "normal", "hard"))
+        self.assertGreater(normal, easy + 0.05, (easy, normal, hard))
+        self.assertGreater(hard, normal + 0.05, (easy, normal, hard))
+        self.assertGreater(hard, easy + 0.25, (easy, normal, hard))
+        self.assertLess(hard, 1.0, (easy, normal, hard))            # not perfectly accurate
 
     def test_only_targets_worth_something_are_listed(self):
         # A target is a hit on a character or on cover in front of one (M3.4-B); nothing else.
@@ -486,6 +490,81 @@ class AccuracyTest(unittest.TestCase):
         aims = {(p.angle, p.power) for p in
                 (AIController("right", "hard", seed=s).choose(battle) for s in range(8))}
         self.assertGreater(len(aims), 1)
+
+
+def play_easy_mirror(seed, first):
+    """One seeded Easy-vs-Easy 3 v 3 match in which each AI picks its team and places its cover.
+
+    Returns a record: how it ended, the rounds played, every plan, the longest run of
+    consecutive shots by one side that damaged nothing at all (no character, no block),
+    the slowest turn in seconds, and any turn the Battle refused or that broke a rule.
+    """
+    ais = {side: AIController(side, "easy", seed=100 * seed + (side == "right")) for side in ("left", "right")}
+    battle = combat(ais["left"].pick_team(3), ais["right"].pick_team(3),
+                    layouts={side: ai.choose_layout() for side, ai in ais.items()}, first_side=first)
+    record = {"plans": [], "longest_harmless_run": 0, "slowest": 0.0, "problems": []}
+    runs = {"left": 0, "right": 0}
+    battle.take_events()
+    while not battle.is_over():
+        side = battle.active_side
+        enemy = "right" if side == "left" else "left"
+        before = ([c.hp for c in battle.teams[enemy].characters], [b.hp for b in battle.castles[enemy].blocks])
+        start = time.perf_counter()
+        plan = ais[side].take_turn(battle)
+        record["slowest"] = max(record["slowest"], time.perf_counter() - start)
+        events = fly(battle)
+        if (plan is None or "safety net" in plan.reason or any(e["type"] == "invalid" for e in events)
+                or [e["side"] for e in events if e["type"] == "action"] != [side]):
+            record["problems"].append((battle.round_number, side, plan and plan.reason))
+            break
+        record["plans"].append((side, plan.actor_index, plan.action, plan.angle, plan.power))
+        if plan.fires_a_shot():
+            after = ([c.hp for c in battle.teams[enemy].characters], [b.hp for b in battle.castles[enemy].blocks])
+            runs[side] = runs[side] + 1 if after == before else 0
+            record["longest_harmless_run"] = max(record["longest_harmless_run"], runs[side])
+    record["end"], record["rounds"] = battle.end_reason, battle.round_number
+    return record
+
+
+class EasyPacingTest(unittest.TestCase):
+    """M3.4-B.1: Easy may miss a lot, but two Easy AIs behind their own cover must usually
+    finish a 3 v 3 match by eliminating a team before the round limit, and never spend
+    long runs of turns on shots that hit nothing.
+
+    The 12 matches (seeds 0-5, each first mover) are played once, here. Single matches often
+    end near round 30, so a handful can't tell "about 40 %" (Easy before M3.4-B.1) from
+    "about 85 %" (now). With at least 8 of 12 required, this test fails by chance about 4 % of
+    the time for the current Easy and passes by chance about 6 % of the time for the old one.
+    The larger seeded benchmark behind the Easy settings is in docs/M0_design.md."""
+
+    MATCHES = [(seed, first) for seed in range(6) for first in ("left", "right")]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.records = [play_easy_mirror(seed, first) for seed, first in cls.MATCHES]
+
+    def test_every_easy_turn_is_legal_and_every_match_ends_by_the_round_limit(self):
+        for record in self.records:
+            self.assertEqual(record["problems"], [])
+            self.assertIn(record["end"], ("elimination", "timeout", "both_lost"))
+            self.assertLessEqual(record["rounds"], ROUND_LIMIT)
+
+    def test_most_easy_mirror_matches_end_in_an_elimination(self):
+        eliminations = [record["end"] == "elimination" for record in self.records]
+        self.assertGreaterEqual(sum(eliminations), 8, [(r["end"], r["rounds"]) for r in self.records])
+
+    def test_easy_never_fires_a_long_run_of_shots_that_hit_nothing(self):
+        for record in self.records:
+            self.assertLessEqual(record["longest_harmless_run"], 6)
+
+    def test_the_same_seeds_replay_the_same_easy_match(self):
+        seed, first = self.MATCHES[0]
+        self.assertEqual(play_easy_mirror(seed, first)["plans"], self.records[0]["plans"])
+
+    def test_every_easy_decision_is_quick(self):
+        # A generous bound so slow machines pass too; measured times are in docs/M0_design.md.
+        for record in self.records:
+            self.assertLess(record["slowest"], 2.0)
 
 
 class MatchTest(unittest.TestCase):

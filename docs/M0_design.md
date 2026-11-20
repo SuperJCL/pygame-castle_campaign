@@ -1,9 +1,10 @@
 # Castle Siege — M0 Requirements and Architecture
 
-Status: **Revision 3 (M2.3), updated for M3.4-B.** This is the living design document. The game is
-implemented up to M3.4-B (Player vs AI, two-player hot seat, the M3.2 balance numbers, the M3.3
-match flow, the M3.4-A redesign: elimination-only victory and deployable cover, and M3.4-B: the
-cover placement screen and a cover-aware computer opponent). Revision 3's final decisions and the
+Status: **Revision 3 (M2.3), updated for M3.4-B.1.** This is the living design document. The game
+is implemented up to M3.4-B.1 (Player vs AI, two-player hot seat, the M3.2 balance numbers, the
+M3.3 match flow, the M3.4-A redesign: elimination-only victory and deployable cover, M3.4-B: the
+cover placement screen and a cover-aware computer opponent, and M3.4-B.1: Easy's aiming error
+lowered so that its matches finish). Revision 3's final decisions and the
 M3.2 / M3.3 / M3.4 changes, just below, override anything older in this document; **where they
 disagree, the M3.4-B block wins, then M3.4-A.** The AI that was built differs from the plan in
 §6.3; see §14, "M3.1 notes" and "M3.4-B notes". The course-compliance checklist is
@@ -975,9 +976,12 @@ open (see M3). The original plan follows.
 - **M3.4-A (done, PM-accepted):** elimination-only victory, timeout draw, deployable cover
   (layout model and validation, default layout), collision along the flight path, the cover rule,
   Cover Guard and Repair on blocks; the M1 duel and the castle benchmark removed.
-- **M3.4-B (done, awaiting PM review; human play-testing pending):** the cover placement screen
-  and setup flow (PvAI and PvP, Back, rematch), the computer's cover placement, cover-aware AI
-  aiming, `drawing.py`.
+- **M3.4-B (done, conditionally accepted by the PM; human play-testing pending):** the cover
+  placement screen and setup flow (PvAI and PvP, Back, rematch), the computer's cover placement,
+  cover-aware AI aiming, `drawing.py`.
+- **M3.4-B.1 (done, awaiting PM review):** Easy's aiming error lowered from 6° / 8 to 4° / 5 (top
+  choices 5 → 4), so Easy matches behind cover usually end in an elimination (§14, "M3.4-B.1
+  notes").
 - **Next:** M3.4-C (run-to-cannon animation), only after PM approval.
 
 **Updated in M2.3.**
@@ -1400,6 +1404,9 @@ pending.
 | Specials considered on a turn | 25 % | 50 % | 100 % |
 | Defend chance: nobody below half HP / someone below half | 10 % / 40 % | 5 % / 50 % | 0 % / 60 % |
 
+*Since M3.4-B.1, Easy aims with 4° / 5 and `top_choices` 4 ("M3.4-B.1 notes"). The rest of this
+table, and the M3.1 measurements below, are unchanged history.*
+
 **Measured** (seeded; 150 shots per cell; castle loss off, so only characters count):
 
 | Character hit rate | Easy | Normal | Hard |
@@ -1701,7 +1708,8 @@ build (one of them is the default cover), 6 seeds each: Hard eliminated it in 36
 rounds on average) and 36/36 (3v3, 13–16); Normal in 29/36 (1v1, 18–19) and 31/36 (3v3, 23–26);
 Easy in 6/36 (1v1) and 0/36 (3v3).
 
-**Gameplay blocker for Easy (reported, not fixed):** Easy cannot reliably reach and eliminate
+**Gameplay blocker for Easy (reported, not fixed; resolved in M3.4-B.1, see "M3.4-B.1 notes"
+below):** Easy cannot reliably reach and eliminate
 protected characters within 30 rounds: Easy vs Easy ends in a draw in up to 5 of 6 3v3 matches,
 and Easy almost never eliminates a team that keeps defending. The cause is its aiming error
 (±6°, ±8 power) against narrow routes over the cover, made worse by Defend and Cover Guard. Normal
@@ -1712,6 +1720,148 @@ to lose to a human who attacks; not yet measured with humans), lower Easy's aimi
 **Intentional simplifications:** routes count only paths that touch a character directly (not
 blasts that would land next to one); route values use the first living character's ATK; a block
 destroyed later in the same blast is not credited twice; the angle error is not part of the
-reliability average.
+reliability average (M3.4-B.1 measured what that costs: at most 2 points of hit chance for Easy).
 
 Human gameplay acceptance is pending.
+
+### M3.4-B.1 notes (Easy AI reliability)
+**Brief (PM, M3.4-B.1):** M3.4-B is conditionally accepted. Make Easy matches stop ending in
+timeout draws, especially 3v3 behind cover. First look for a decision bug; only then change
+Easy's numbers, in small and understandable steps. Keep Normal and Hard, and change no rule
+(damage, physics, cover HP, cover budget, round limit, victory, controls).
+
+**Root cause (seeded Easy-vs-Easy matches, scratch scripts):**
+- **No decision bug was found.** Easy never used the fallback aim and never aimed at cover that
+  stands in nobody's way (11 % of its shots hit only such cover, through aiming error).
+  It spent about as many turns on Defend, Rally and Repair as Normal (23 % against 27 % in 3v3).
+  Every listed target has a positive score, and its chosen aims were almost as likely to damage a
+  character as the best aim available (next point).
+- **The cause is the aiming error.** At 89 Easy decisions in 3v3, every aim within the old error
+  (6°, 8 power) was simulated. The best possible aim would have damaged a character 45 % of the
+  time; Easy's actual choice did so 43 % of the time. Two other ranking changes reach the same
+  level:
+  - including the angle error in the reliability score: 43–44 %;
+  - always taking the best target instead of one of the best 5: 42 %.
+
+  In 1v1, every policy gives 23 %. So the random choice and the reliability score each cost at
+  most 2 points, and the error itself is the limit:
+  - a ±8 power error lands a shot up to about 150 px off;
+  - a ±6° error moves a 30° or 60° shot about ±100 px;
+  - the gap in which a shot over the cover can reach a character is only about 90–180 px wide.
+- **Why matches ran out of rounds:** an Easy side in a 3v3 mirror dealt about as much damage in
+  30 rounds as the other team has HP (340), so small shortfalls turned matches into draws.
+
+**Candidates tested** (Easy vs Easy, 3v3, each AI placing its own cover, both first movers;
+"finished" = a team eliminated before the round limit):
+
+| Easy (angle / power / top choices) | Matches | Finished | Average rounds | Shots that damage a character |
+|---|---|---|---|---|
+| 6 / 8 / 5 (old) | 100 | 35 % | 28.3 | 41 % |
+| 6 / 6 / 5 (power error only) | 40 | 60 % | 27.0 | 46 % |
+| 4 / 8 / 5 (angle error only) | 40 | 52 % | 27.8 | 42 % |
+| 4 / 6 / 5 | 40 | 52 % | 27.1 | 48 % |
+| 4 / 6 / 4 (PM's starting candidate) | 100 | 70 % | 25.3 | 50 % |
+| 5 / 6 / 4 | 100 | 63 % | 26.3 | 48 % |
+| 5 / 5 / 4 | 100 | 77 % | 25.5 | 51 % |
+| **4 / 5 / 4 (chosen)** | 100 | **83 %** | 25.0 | 53 % |
+| 3 / 6 / 4 | 40 | 65 % | 24.9 | 52 % |
+
+- **Power error matters most.**
+- **Top choices 4 vs 5 played identical matches** (4 / 6 / 4 and 4 / 6 / 5, 40 of 40), because a
+  3v3 turn rarely offers more than four targets or shooters.
+- **Noise:** 40 matches give about ±8 points of noise, so the finalists were run 100 times.
+- **Accuracy alone** at the same 89 positions (the chance that the best-ranked aim damages a
+  character):
+
+  | Errors | Chance |
+  |---|---|
+  | 6 / 8 | 0.42 |
+  | 4 / 6 | 0.51 |
+  | 5 / 5 | 0.53 |
+  | 4 / 5 | 0.56 |
+  | Normal (3 / 4) | 0.68 |
+  | Hard (1 / 2) | 0.99 |
+
+**Chosen: Easy = 4° / 5 power / top 4.**
+- It reaches the target with a margin. The PM's 4 / 6 / 4 met it only on average: 70 % with AI
+  cover, but 70 % with the default cover and 52 % in one batch of 40.
+- It stays clearly weaker than Normal on every measure:
+  - accuracy 0.56 against 0.68;
+  - Normal finishes more matches and in fewer rounds;
+  - Normal wins the head-to-head matches.
+- The angle error is no larger than in the PM's candidate; the power error is 1 point lower.
+- Easy's other handicaps are unchanged: a random choice among its best 4, specials on only 25 %
+  of turns, and 10 % random Defends. So it still plays carelessly as well as inaccurately.
+- Including the angle error in the reliability score was rejected: it would add code for at most
+  2 points of hit chance. Normal and Hard are unchanged, so their matches play exactly as before.
+
+**Before → after** (Easy vs Easy; finished matches; 20 matches per 1v1 or 2v2 cell, 40 per 3v3
+cell, 100 for 3v3 with AI cover):
+
+| Easy vs Easy | Empty field | Default cover | AI cover |
+|---|---|---|---|
+| 1v1 | 100 % → 100 % | 100 % → 100 % | 95 % → 100 % |
+| 2v2 | 100 % → 100 % | 75 % → 100 % | 80 % → 100 % |
+| 3v3 | 78 % → 90 % | 42 % → 88 % | 35 % → 83 % |
+
+- **3v3 overall:** 46 % → 86 % of 180 matches finished. Every unfinished match was a round-30
+  timeout draw; there were no both-lost draws.
+- **3v3 with AI cover, other measures:**
+  - average length 28.3 → 25.0 rounds;
+  - shots that damage a character 41 % → 53 %;
+  - shots that damage nothing at all 30 % → 22 %;
+  - cover in the way of a route broken per side and match: 347 → 332 HP.
+- **Harmless shots in a row:** no harmless-shot loops. The longest run of consecutive shots that
+  damaged nothing was at most 6 per cell (before: up to 10, in 2v2).
+- **Normal and Hard, for comparison** (unchanged code, same matrix):
+  - Normal finished every 1v1 and 2v2 match, and 3v3 100 % / 88 % / 95 % (empty / default / AI);
+    20.9 rounds and 63 % hits for 3v3 with AI cover.
+  - Hard finished all of them; 13.1 rounds and 89 % hits for 3v3 with AI cover.
+- **Easy vs Normal (AI cover, both sides and first movers):**
+
+  | | 1v1 (40 matches) | 3v3 (40 matches) |
+  |---|---|---|
+  | Old Easy | Easy won 7, Normal 33 | Easy won 2, Normal 29, 9 draws |
+  | New Easy | Easy won 13, Normal 27 | Easy won 8, Normal 27, 5 draws |
+
+- **Stress case** (a team that Defends every turn; Defend halves character damage and Cover
+  Guard halves block damage; 24 matches per row):
+
+  | | 1v1 | 3v3 |
+  |---|---|---|
+  | Old Easy | 4 eliminated | 0 eliminated |
+  | New Easy | 12 eliminated | 13 eliminated |
+  | Normal | 22 eliminated | 21 eliminated |
+  | Hard | 24 eliminated | 24 eliminated |
+
+- **A lone Knight behind the default cover** that never shoots back: Easy won before the limit in
+  15 of 20 seeds before and in 20 of 20 now (12–27 rounds).
+
+**Decision time** (idle Windows PC, the M3.4-B script: every decision in 9 seeded AI-vs-AI matches
+per level). Easy: median 94 ms, 95th percentile 218, max 295 ms; it was 96 / 197 / 263 ms in M3.4-B.
+Normal and Hard took 118 / 170 / 216 ms and 136 / 186 / 216 ms; their code is unchanged and they
+made the same number of decisions.
+
+**Tests:**
+- **`test_ai` EasyPacingTest** plays 12 seeded Easy-vs-Easy 3v3 matches with AI cover and checks:
+  - at least 8 end in an elimination;
+  - every turn is legal and every match ends by the round limit;
+  - no side fires more than 6 harmless shots in a row;
+  - the same seeds replay the same match;
+  - every decision is quick.
+
+  With the old settings it fails (4 of 12 eliminated). A first version with 6 matches and a bar
+  of 4 failed with the new settings too (3 of 6). The same matches on seeds 3–22 finished 35 of
+  40 times, so 6 matches were simply too few. The size and the bar were set from the binomial
+  error rates, not from which seeds pass.
+- **AccuracyTest** now checks that Easy < Normal < Hard in hit rate (40 seeded shots each); it
+  fails if Easy is given Normal's aim.
+- **The protected-Knight test** now includes Easy.
+
+**Remaining risks:**
+- **Pace:** Easy matches still run long, about 25 of 30 rounds in 3v3 behind cover, and about 1
+  in 6 still ends in a draw.
+- **Passive stress case:** against a player who only Defends, Easy eliminates the team only about
+  half the time.
+- **Easy vs Normal in 1v1** is closer than before (Easy won 13 of 40).
+- **Human feel:** whether the new Easy feels easy to a human has not been play-tested.

@@ -12,6 +12,8 @@ teams take turns: pick a character, aim the cannon, and Attack, Defend or use a 
   the computer you place the LEFT cover and the computer places its own.
 - The computer breaks cover on purpose when that cover stands between its cannon and one of your
   characters.
+- M3.4-B.1: the Easy computer aims a little better (4° / 5 instead of 6° / 8). Before that, most
+  Easy-vs-Easy 3v3 matches ran out of rounds without a winner.
 - The characters' run to the cannon is planned for M3.4-C.
 
 You play the LEFT team against a computer opponent (Easy, Normal or Hard), or two people play
@@ -223,8 +225,8 @@ to switch the keyboard to English first.
 
 | | Easy | Normal | Hard |
 |---|---|---|---|
-| Aiming error (angle / power, up to ±) | 6° / 8 | 3° / 4 | 1° / 2 |
-| Chooses among the best … targets (a character, or the cover in front of one) | 5 | 3 | 1 (always the best) |
+| Aiming error (angle / power, up to ±) | 4° / 5 (6° / 8 before M3.4-B.1) | 3° / 4 | 1° / 2 |
+| Chooses among the best … targets (a character, or the cover in front of one) | 4 | 3 | 1 (always the best) |
 | Considers specials on a turn | 25 % | 50 % | 100 % |
 | Defend chance (all at least half HP / one below half HP) | 10 % / 40 % | 5 % / 50 % | 0 % / 60 % |
 

@@ -9,11 +9,13 @@ import ctypes
 import glob
 import os
 import unittest
+import unittest.mock
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 try:
     import pygame
+    import drawing
     import main
     from ai import AIController
     from animation import FIRE, FIRE_FRAMES, RETURN_FRAMES, RETURN_TO_SLOT, RUN_FRAMES, RUN_TO_CANNON, firing_x
@@ -983,19 +985,19 @@ class CoverGuardIndicatorTest(MainTestCase):
 
 
 class ResultReasonTest(MainTestCase):
-    """The result screen shows the winner (or DRAW), the reason and the rounds played."""
+    """The result screen shows the winner (or DRAW), the reason and the final round."""
 
     def test_an_elimination_shows_its_reason_and_the_rounds(self):
         self.start([Knight], [Archer])
         end_match_now(self)
         self.assertEqual(self.game.result_title(), "LEFT TEAM WINS!")
         self.assertEqual(self.game.result_reason(), "Every RIGHT character was defeated.")
-        self.assertEqual(self.game.result_rounds(), "Rounds played: 1")
+        self.assertEqual(self.game.result_rounds(), f"Final round: 1 / {ROUND_LIMIT}")
         self.game.handle_key(pygame.K_r, 0)                    # RIGHT moves first now
         end_match_now(self)
         self.assertEqual(self.game.result_title(), "RIGHT TEAM WINS!")
         self.assertEqual(self.game.result_reason(), "Every LEFT character was defeated.")
-        self.assertEqual(self.game.result_rounds(), "Rounds played: 1")
+        self.assertEqual(self.game.result_rounds(), f"Final round: 1 / {ROUND_LIMIT}")
 
     def test_the_round_limit_is_a_draw_even_when_one_team_is_ahead(self):
         self.start([Knight], [Knight])
@@ -1003,7 +1005,7 @@ class ResultReasonTest(MainTestCase):
         defend_until_the_end(self)
         self.assertEqual(self.game.result_title(), "DRAW!")
         self.assertEqual(self.game.result_reason(), f"Round limit: {ROUND_LIMIT} rounds and no team was eliminated.")
-        self.assertEqual(self.game.result_rounds(), f"Rounds played: {ROUND_LIMIT}")
+        self.assertEqual(self.game.result_rounds(), f"Final round: {ROUND_LIMIT} / {ROUND_LIMIT}")
         self.assertIn("Round limit reached: no team was eliminated.", self.game.log)
         self.assertIn("It's a draw!", self.game.log)
 
@@ -1013,7 +1015,7 @@ class ResultReasonTest(MainTestCase):
         defend_until_the_end(self)
         self.assertEqual(self.game.battle.round_number, ROUND_LIMIT)
         self.assertEqual(self.game.result_title(), "DRAW!")
-        self.assertEqual(self.game.result_rounds(), f"Rounds played: {ROUND_LIMIT}")
+        self.assertEqual(self.game.result_rounds(), f"Final round: {ROUND_LIMIT} / {ROUND_LIMIT}")
 
     def test_every_result_line_fits_the_result_panel(self):
         texts = ["Every RIGHT character was defeated.", "Both teams were defeated at the same time.",
@@ -1534,6 +1536,228 @@ class ComputerCannonRunTest(MainTestCase):
         self.assertFalse(any("AI (Hard)" in line for line in self.game.log[log_length:]))
         self.wait_for_the_computer()
         self.assertEqual(self.game.cannon_run.shot.side, "right")
+
+
+def contrast(colour_a, colour_b):
+    """The WCAG contrast ratio of two RGB colours (4.5 or more is easy to read for small text)."""
+    def luminance(colour):
+        channels = []
+        for value in colour:
+            value /= 255
+            channels.append(value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4)
+        return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+    light, dark = sorted((luminance(colour_a), luminance(colour_b)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)
+
+
+class InterfacePolishTest(MainTestCase):
+    """M4.1: cosmetic changes only. What the screen says and shows; no rule is involved."""
+
+    def pixel(self, x, y):
+        self.game.draw()
+        return tuple(self.screen.get_at((round(x), round(y))))[:3]
+
+    def computer_moves_first(self):
+        self.start_vs_ai([Knight, Archer])                     # Normal
+        end_match_now(self)
+        self.click(self.game.rematch_button.rect)               # RIGHT (the computer) moves first now
+        self.assertTrue(self.game.is_ai_turn())
+
+    # ----- status text --------------------------------------------------------------
+
+    def test_when_the_computer_moves_first_nothing_asks_the_player_to_act(self):
+        self.computer_moves_first()
+        shown = " ".join([self.game.message, self.game.hud_turn_text()] + self.game.selected_info_lines()
+                         + self.game.action_hint_lines())
+        self.assertNotIn("Choose a character", shown)
+        self.assertNotIn("choose who acts", shown)
+        self.assertIn("The computer (RIGHT) moves first.", self.game.message)
+        self.assertIn("thinking", self.game.hud_turn_text())
+        self.assertIn("RIGHT TEAM'S TURN (computer)", self.game.hud_turn_text())
+        self.assertEqual(self.game.log[:2], ["--- Round 1 ---", "RIGHT team moves first."])
+
+    def test_while_the_computer_thinks_no_character_is_marked_as_chosen(self):
+        self.computer_moves_first()
+        self.assertIn("thinking", " ".join(self.game.selected_info_lines()))
+        left, top, width, height = self.character_rect("right", self.game.selected["right"])
+        ring = pygame.Rect(left, top, width, height).inflate(8, 8)
+        self.assertNotEqual(self.pixel(ring.left + 1, ring.centery), main.ACTIVE_RING_COLOR)
+
+    def test_the_hud_message_keeps_the_result_of_a_shot(self):
+        self.start([Knight], [Archer])
+        aim(self.game, *FRONT_CHARACTER)
+        self.click(self.game.action_buttons["attack"].rect)
+        finish_shot(self.game)
+        self.assertEqual(self.game.message, "RIGHT Archer takes 26 damage.")     # not "Knight gains 10 EXP."
+        self.assertIn("Knight gains 10 EXP.", self.game.log)                    # still in the log
+
+    def test_the_turn_banner_says_what_is_happening(self):
+        self.start([Knight], [Archer])
+        self.assertEqual(self.game.hud_turn_text(), f"Round 1 / {ROUND_LIMIT}   LEFT TEAM'S TURN: aim and act")
+        aim(self.game, *COVER_WALL)
+        self.click(self.game.action_buttons["attack"].rect)
+        self.assertTrue(self.game.hud_turn_text().endswith("running to the cannon"))
+        run_to_cannon(self.game)
+        self.assertTrue(self.game.hud_turn_text().endswith("shot in the air"))
+        finish_shot(self.game)
+        self.assertEqual(self.game.hud_turn_text(), f"Round 1 / {ROUND_LIMIT}   RIGHT TEAM'S TURN: aim and act")
+        end_match_now(self)
+        self.assertEqual(self.game.hud_turn_text(), f"Round 1 / {ROUND_LIMIT}   GAME OVER")
+
+    def test_after_the_game_the_panel_does_not_invite_input_and_no_cannon_is_active(self):
+        self.start([Knight], [Archer])
+        end_match_now(self)
+        lines = " ".join(self.game.selected_info_lines())
+        self.assertNotIn("choose who acts", lines)
+        self.assertIn("The game is over.", lines)
+        for cannon in self.game.battle.cannons.values():           # no yellow ring around either cannon
+            self.assertNotEqual(self.pixel(cannon.x + 13, cannon.y), main.ACTIVE_RING_COLOR)
+
+    def test_the_aim_is_shown_in_the_panel_and_under_the_active_cannon(self):
+        self.start([Knight], [Archer])
+        for _ in range(5):
+            self.game.handle_key(pygame.K_UP, 0)
+        self.game.handle_key(pygame.K_RIGHT, SHIFT)
+        self.assertEqual(self.game.aim_text(), "Angle 50°   Power 55")
+        self.assertEqual(self.game.cannon_label(self.game.battle.cannons["left"]), "50° / 55")
+        self.game.draw()
+
+    def test_the_panel_hints_fit_under_the_buttons_for_every_role(self):
+        self.start([Knight, Archer, Engineer], [Knight, Archer, Engineer])
+        for index in range(3):
+            for blocked in (False, True):
+                with self.subTest(index=index, blocked=blocked):
+                    character = self.game.battle.teams["left"].characters[index]
+                    if blocked:
+                        character.start_cooldown()
+                    self.game.select_actor(index)
+                    hints = []
+                    for line in self.game.action_hint_lines():
+                        hints.extend(main.wrap_text(line, self.game.tiny_font, 390))
+                    self.assertLessEqual(main.PANEL_TOP + 84 + 18 * len(hints), main.WINDOW_HEIGHT, hints)
+
+    # ----- feedback on the battlefield ------------------------------------------------
+
+    def test_a_hit_shows_a_floating_damage_number_for_a_second(self):
+        self.start([Knight], [Archer])
+        aim(self.game, *FRONT_CHARACTER)
+        self.click(self.game.action_buttons["attack"].rect)
+        run_to_cannon(self.game)
+        while self.game.battle.projectile is not None:
+            self.game.update()
+        texts = [(text, x) for x, _, text, _, _ in self.game.floaters]
+        self.assertEqual(texts, [("-26", SLOT_X["right"][0])])
+        for _ in range(main.FLOAT_FRAMES):
+            self.game.update()
+        self.assertEqual(self.game.floaters, [])
+
+    def test_shielded_and_defeated_characters_get_their_own_words(self):
+        self.start([Knight], [Archer])
+        event = {"type": "explosion", "side": "left", "kind": "block", "x": 1100, "y": 528, "target": None,
+                 "blocks_hit": 1, "damage": 50, "guarded": False, "covered": ["Archer"], "characters_hit": []}
+        self.game.show_event(event)
+        self.assertEqual([text for _, _, text, _, _ in self.game.floaters], ["shielded"])
+        event.update(covered=[], characters_hit=[{"name": "Archer", "damage": 26, "defeated": True}])
+        self.game.show_event(event)
+        self.assertEqual([text for _, _, text, _, _ in self.game.floaters], ["shielded", "-26", "DEFEATED"])
+        self.game.handle_key(pygame.K_r, 0)                     # a rematch clears them
+        self.assertEqual(self.game.floaters, [])
+
+    def test_an_explosion_no_longer_hides_the_character_it_hits(self):
+        self.start([Knight], [Archer])
+        x, y = self.game.battle.teams["right"].slot_center(0)
+        self.game.explosions = [[x, y, 0]]                      # a fresh explosion right on the Archer
+        body = self.pixel(x, main.GROUND_Y - 20)
+        self.assertNotEqual(body, (255, 220, 80))                # not covered by the solid yellow
+        self.assertNotEqual(body, main.TEAM_COLORS["right"])     # but the explosion is still visible
+
+    def test_a_power_shot_looks_different_and_every_shot_leaves_a_short_trail(self):
+        self.start([Archer], [Knight])
+        aim(self.game, *FRONT_CHARACTER)
+        self.click(self.game.action_buttons["special"].rect)
+        run_to_cannon(self.game)
+        self.assertEqual(self.game.shot_style, "power")
+        for _ in range(main.TRAIL_LENGTH + 5):
+            self.game.update()
+        shot = self.game.battle.projectile
+        self.assertEqual(len(self.game.trail), main.TRAIL_LENGTH)
+        self.assertEqual(self.pixel(shot.x, shot.y), main.POWER_SHOT_COLOR)
+        finish_shot(self.game)
+        self.assertEqual(self.game.trail, [])
+        aim(self.game, *HARMLESS)                               # RIGHT's Knight: a plain attack
+        self.click(self.game.action_buttons["attack"].rect)
+        run_to_cannon(self.game)
+        self.assertEqual(self.game.shot_style, "attack")
+        shot = self.game.battle.projectile
+        self.assertEqual(self.pixel(shot.x, shot.y), main.SHOT_COLOR)
+
+    def test_damaged_blocks_show_cracks_and_destroyed_blocks_leave_an_outline(self):
+        self.assertEqual([drawing.block_cracks(hp, 100) for hp in (100, 80, 79, 40, 39, 1)], [0, 0, 1, 1, 2, 2])
+        self.start([Knight], [Archer])
+        blocks = self.game.battle.castles["right"].blocks
+        sky = self.pixel(blocks[0].x + 1, blocks[0].y + 16)
+        self.assertNotEqual(sky, main.SKY_COLOR)                  # a standing block
+        blocks[0].take_damage(100)                                 # destroyed: no longer stops shots ...
+        self.assertTrue(blocks[0].is_destroyed())
+        self.assertEqual(self.pixel(blocks[0].x, blocks[0].y + 4), drawing.RUBBLE_COLOR)   # ... but its place shows
+        self.assertEqual(self.pixel(blocks[0].x + 16, blocks[0].y + 16), main.SKY_COLOR)
+
+    def test_hp_bars_turn_red_below_a_quarter(self):
+        archer = Archer("A", "left")
+        colours = []
+        for damage in (0, 45, 22, 1):                              # 90, 45, 23 and 22 HP (a quarter: 22.5)
+            archer.take_damage(damage)
+            colours.append(drawing.hp_bar_color(archer))
+        self.assertEqual(colours, [drawing.HP_GOOD, drawing.HP_HURT, drawing.HP_HURT, drawing.HP_LOW])
+
+    def test_names_on_the_battlefield_are_easy_to_read(self):
+        for side in ("left", "right"):
+            self.assertGreaterEqual(contrast(main.LABEL_COLORS[side], main.SKY_COLOR), 4.5, side)
+
+    # ----- buttons, selection and placement ---------------------------------------------
+
+    def test_an_enabled_button_lights_up_under_the_mouse(self):
+        button = main.Button(10, 10, 100, 40, "OK")
+        inside = (25, 30)
+
+        def colour(hover_at):
+            with unittest.mock.patch("pygame.mouse.get_pos", return_value=hover_at):
+                button.draw(self.screen, self.game.font)
+            return tuple(self.screen.get_at(inside))[:3]
+        self.assertNotEqual(colour((50, 30)), colour((500, 500)))
+        button.enabled = False
+        self.assertEqual(colour((50, 30)), colour((500, 500)))       # a disabled button doesn't react
+
+    def test_the_computers_cards_are_clearly_not_clickable(self):
+        rect = self.game.card_rects[("right", Knight)]
+        band = (rect.left + 8, rect.bottom - 18)                    # a grey band: "THE COMPUTER PICKS"
+        self.assertEqual(self.pixel(*band), main.BUTTON_OFF)        # Player vs AI (the default)
+        self.click(self.game.mode_buttons["pvp"].rect)
+        self.assertNotEqual(self.pixel(*band), main.BUTTON_OFF)
+
+    def test_the_cover_screen_shows_the_budget_and_marks_slots_that_cannot_take_a_block(self):
+        self.pick_teams([Knight], [Archer])
+        self.click(self.game.start_button.rect)
+        self.click_slot("left", 3)                                 # 5 blocks; slot 7 can't take one
+        pips = self.game.budget_pip_rects()
+        self.assertEqual(len(pips), 6)
+        filled = [self.pixel(*pip.center) == main.block_color("left", 1, 1) for pip in pips]
+        self.assertEqual(filled, [True] * 5 + [False])
+        unsupported = main.slot_rect("left", 7)
+        self.assertEqual(self.pixel(*unsupported.center), main.CLOSED_SLOT_COLOR)   # the "x"
+        for pip in pips:                                           # the pips stay clear of the text
+            self.assertFalse(pip.colliderect(pygame.Rect(0, 100, main.WINDOW_WIDTH, 120)))
+
+    def test_win_and_draw_banners_look_different(self):
+        self.start([Knight], [Knight])
+        end_match_now(self)
+        banner = main.result_banner_rect()
+        win = self.pixel(banner.left + 4, banner.top + 4)
+        self.assertEqual(win, main.TEAM_COLORS["left"])
+        self.game.handle_key(pygame.K_r, 0)
+        defend_until_the_end(self)
+        self.assertEqual(self.pixel(banner.left + 4, banner.top + 4), main.DRAW_COLOR)
+        self.assertIn("time limit", self.game.result_subtitle().lower())
 
 
 if __name__ == "__main__":

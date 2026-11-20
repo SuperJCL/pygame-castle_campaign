@@ -1,8 +1,9 @@
 """Shared look of the Castle Siege screens: colours, text, character figures and buttons.
 
 Moved out of main.py unchanged in M3.4-B, so main.py can stay focused on the screens and
-their input. M3.4-C added the running and firing poses. Uses Pygame, so (like main.py) it
-is not imported by the game-rule modules.
+their input. M3.4-C added the running and firing poses; M4.1 the cracked and destroyed
+blocks, HP-bar colours, outlined text and button hover. Everything here only draws: nothing
+changes a rule. Uses Pygame, so (like main.py) it is not imported by the game-rule modules.
 """
 import math
 
@@ -40,6 +41,20 @@ OPEN_SLOT_COLOR = (226, 240, 252)   # an empty cover slot that can take a block
 FLASH_COLOR = (255, 236, 120)       # the muzzle flash (M3.4-C): a yellow centre ...
 FLASH_EDGE = (255, 150, 40)         # ... with an orange edge
 RUN_LIFT = 6                        # a running figure is drawn this much higher, so its legs show
+# M4.1 (cosmetic only).
+LABEL_COLORS = {"left": (30, 60, 150), "right": (150, 40, 30)}   # names on the sky: darker, easier to read
+HP_GOOD, HP_HURT, HP_LOW = (60, 190, 70), (230, 150, 40), (215, 50, 40)   # HP bar: > 1/2, > 1/4, the rest
+BUTTON_HOVER = (95, 125, 170)       # a button under the mouse is a little lighter
+BUTTON_CHOSEN_HOVER = (240, 192, 80)
+CRACK_COLOR = (45, 45, 50)          # cracks on a damaged block
+RUBBLE_COLOR = (105, 112, 122)      # the dashed outline where a block was destroyed
+CLOSED_SLOT_COLOR = (150, 156, 166)  # the "x" on a cover slot that can't take a block now
+POWER_SHOT_COLOR = (225, 85, 20)    # a Power Shot is bigger and orange
+TRAIL_COLOR = (120, 128, 140)       # the dots a shot leaves behind it
+DAMAGE_COLOR = (200, 30, 30)        # floating damage numbers
+DRAW_COLOR = (150, 120, 50)         # the result banner of a draw (a win uses the winner's colour)
+# Crack lines inside a 32 px block: the first appears below 80 % HP, the second below 40 %.
+CRACKS = (((8, 4), (15, 14), (11, 24)), ((24, 6), (19, 17), (26, 28)))
 
 
 def block_color(side, hp, max_hp):
@@ -56,10 +71,57 @@ def hp_bar_width(character, full_width):
     return int(full_width * character.hp / character.max_hp)
 
 
+def hp_bar_color(character):
+    """Green above half HP, orange above a quarter, red at a quarter or less."""
+    if character.hp * 2 > character.max_hp:
+        return HP_GOOD
+    if character.hp * 4 > character.max_hp:
+        return HP_HURT
+    return HP_LOW
+
+
+def block_cracks(hp, max_hp):
+    """How many cracks a block shows: none from 80 % of its HP up, one from 40 %, two below."""
+    if hp * 10 >= 8 * max_hp:
+        return 0
+    if hp * 10 >= 4 * max_hp:
+        return 1
+    return 2
+
+
+def draw_block(screen, side, x, y, size, hp, max_hp):
+    """A standing cover block: darker as it loses HP (block_color), with cracks (block_cracks)."""
+    pygame.draw.rect(screen, block_color(side, hp, max_hp), (x, y, size, size))
+    pygame.draw.rect(screen, TEXT_COLOR, (x, y, size, size), 1)
+    for crack in CRACKS[:block_cracks(hp, max_hp)]:
+        points = [(x + px * size // 32, y + py * size // 32) for px, py in crack]
+        pygame.draw.lines(screen, CRACK_COLOR, False, points, 2)
+
+
+def draw_rubble_outline(screen, x, y, size):
+    """A dashed outline where a block was destroyed. Only a picture: it stops no shot."""
+    last = size - 1
+    for start in range(0, size, 10):
+        end = min(start + 6, last)
+        for a, b in (((start, 0), (end, 0)), ((start, last), (end, last)),
+                     ((0, start), (0, end)), ((last, start), (last, end))):
+            pygame.draw.line(screen, RUBBLE_COLOR, (x + a[0], y + a[1]), (x + b[0], y + b[1]))
+
+
 def draw_text(screen, text, font, color, **position):
     """Draw text placed by one keyword, e.g. center=(x, y) or topleft=(x, y)."""
     image = font.render(text, True, color)
     screen.blit(image, image.get_rect(**position))
+
+
+def draw_outlined_text(screen, text, font, color, outline, **position):
+    """Like draw_text, with a 1 px outline all round, so it can be read on any background."""
+    image = font.render(text, True, color)
+    rect = image.get_rect(**position)
+    edge = font.render(text, True, outline)
+    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        screen.blit(edge, rect.move(dx, dy))
+    screen.blit(image, rect)
 
 
 def wrap_text(text, font, max_width):
@@ -136,12 +198,13 @@ class Button:
         return self.enabled and self.rect.collidepoint(pos)
 
     def draw(self, screen, font):
+        hovered = self.enabled and self.rect.collidepoint(pygame.mouse.get_pos())   # M4.1
         if not self.enabled:
             fill, text_color = BUTTON_OFF, DIM_TEXT
         elif self.chosen:
-            fill, text_color = BUTTON_CHOSEN, TEXT_COLOR
+            fill, text_color = (BUTTON_CHOSEN_HOVER if hovered else BUTTON_CHOSEN), TEXT_COLOR
         else:
-            fill, text_color = BUTTON_COLOR, LIGHT_TEXT
+            fill, text_color = (BUTTON_HOVER if hovered else BUTTON_COLOR), LIGHT_TEXT
         pygame.draw.rect(screen, fill, self.rect, border_radius=6)
         pygame.draw.rect(screen, TEXT_COLOR, self.rect, 2, border_radius=6)
         draw_text(screen, self.label, font, text_color, center=self.rect.center)

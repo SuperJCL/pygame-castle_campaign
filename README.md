@@ -6,7 +6,7 @@ stands behind its own cover blocks and shares one cannon standing in front of th
 teams take turns: pick a character, aim the cannon, and Attack, Defend or use a Special ability.
 **You win by defeating every enemy character.**
 
-**Current status: Milestone 3.4-C — the characters run to the shared cannon.**
+**Current status: Milestone 4.1 — interface and visual polish.**
 - Only elimination wins. Castle destruction is not a victory condition.
 - Before each battle, every team places its own cover: up to 6 blocks on 8 fixed slots. Against
   the computer you place the LEFT cover and the computer places its own.
@@ -16,6 +16,9 @@ teams take turns: pick a character, aim the cannon, and Attack, Defend or use a 
   Easy-vs-Easy 3v3 matches ran out of rounds without a winner.
 - M3.4-C: an attacking character runs to its team's cannon, fires it and runs back (see
   *The run to the cannon* below). It is a visual effect only: no rule changed.
+- M4.1: clearer screens (see *What the screen shows* below): a turn banner that says what is
+  happening, floating damage numbers, see-through explosions, cracked and destroyed cover,
+  distinct win and draw screens. **Cosmetic only: no game rule, AI choice or number changed.**
 
 You play the LEFT team against a computer opponent (Easy, Normal or Hard), or two people play
 each other on one computer. The design and roadmap are in [docs/M0_design.md](docs/M0_design.md).
@@ -61,17 +64,17 @@ In VS Code you can also pick the `.venv` interpreter (**Python: Select Interpret
    - Click character cards to add them to your team; click again to remove one.
      - Each card shows HP, ATK, DEF, block damage and the special ability.
      - Against the computer you pick only the LEFT team; the computer picks its own team of the
-       same size when the battle starts.
+       same size when the battle starts (its cards say "THE COMPUTER PICKS").
    - A team can't have the same role twice. The first pick (Slot 1) stands at the front, right
      behind the cover.
    - Press **PLACE COVER** when the team(s) are full.
 2. **Cover placement.** One team at a time sees its own side of the battlefield: its characters,
    its cannon and its 8 cover slots, exactly where they will be in the battle.
    - Click an **empty slot** (light, with a "+") to place a block. Click a **block** to remove it.
-   - "Blocks: 4 / 6" shows how many of the 6 blocks are used. You may confirm any cover from
-     0 to 6 blocks.
+   - "Blocks: 4 / 6" and six small squares show how many of the 6 blocks are used. You may
+     confirm any cover from 0 to 6 blocks.
    - A raised slot needs a block under it. A slot that can't take a block right now (no block
-     under it, or all 6 blocks used) is only outlined. Removing a lower block also removes the
+     under it, or all 6 blocks used) shows an "×". Removing a lower block also removes the
      block on top of it, and the status line says so.
    - The screen starts with the default cover (the whole bottom row plus the two raised slots
      next to the characters), so you can also just press **Confirm**.
@@ -83,11 +86,14 @@ In VS Code you can also pick the `.venv` interpreter (**Python: Select Interpret
      losing the teams or the cover already placed. Cover choices are also kept when you change
      the teams, because characters never stand on cover slots.
 3. **Battle.** The LEFT team moves first in the first match, then the turns alternate.
-   - **The HUD** shows the round (e.g. "Round 7 / 30") and, for each team, how many characters
-     are still standing and how many cover blocks are left (e.g. "LEFT  2/3 standing   cover 5/6").
+   - **The HUD** has a turn banner in the colour of the team to move, with the round and what
+     is happening (e.g. "Round 7 / 30   LEFT TEAM'S TURN (you): aim and act"), the result of
+     the last action under it, and for each team how many characters are still standing and how
+     many cover blocks are left (e.g. "LEFT  2/3 standing   cover 5/6").
    - **Choose who acts:** click one of your living characters, or press **1 / 2 / 3**. The chosen
      character has a yellow marker, and the panel shows its HP, ATK, DEF, Level, EXP and special.
-   - **Aim** with the arrow keys (the orange arrow; longer means more power).
+   - **Aim** with the arrow keys (the orange arrow; longer means more power). The angle and
+     power are shown in the panel (with a power bar) and under the cannon.
    - **Act:**
      - **ATTACK** (or **SPACE**) fires your team's cannon with that aim and the chosen
        character's stats. The character first runs to the cannon; the shot leaves when it gets
@@ -101,8 +107,8 @@ In VS Code you can also pick the `.venv` interpreter (**Python: Select Interpret
    and an action by itself. The combat log shows its choice (e.g. "AI (Normal): Archer attacks
    the LEFT Knight." or "AI (Hard): Engineer attacks the cover in front of the LEFT Knight.") and
    what happened. Its attacks take the same run to the cannon as yours.
-4. **Result.** The result screen shows the winner, or DRAW, why the match ended and how many
-   rounds were played.
+4. **Result.** The result screen shows the winner (in that team's colour) or DRAW (in amber,
+   "Time limit reached"), why the match ended and the final round.
    - Choose **Rematch** (same teams, both covers, same computer level; every character and block
      starts at full HP again) or **Change teams** (back to team selection; your cover choices are
      kept).
@@ -199,6 +205,30 @@ to switch the keyboard to English first.
   (`docs/M3.2_balance_report.md`). That benchmark measured the old castle rules, so its numbers
   don't apply to M3.4. Not yet confirmed by human play-testing.
 
+## What the screen shows (M4.1, cosmetic only)
+Nothing in this section changes a rule, the computer's choices or any number: it only changes
+what is drawn and what the text says.
+- **Turn banner:** whose turn it is, who plays it ("you" or "computer") and the phase: *aim and
+  act*, *running to the cannon*, *shot in the air*, *thinking...* (the computer), *waiting* (the
+  last shooter is still running back) or *game over*.
+- **Status line:** keeps the result of the last action ("LEFT Knight takes 28 damage."); new
+  rounds and EXP are only in the combat log. When the computer moves first it says so, and
+  nothing asks you to act.
+- **The computer's turn:** no character is marked until the computer has chosen, and the panel
+  says it is thinking.
+- **Damage:** a red "-28" floats up from a hit character for a second ("DEFEATED" when it falls,
+  "shielded" when cover protected it). Explosions are see-through, so the character they hit
+  stays visible. HP bars have an outline and turn orange below half HP and red below a quarter.
+- **Cover:** damaged blocks get darker and show one crack below 80 % HP and two below 40 %. A
+  destroyed block leaves a dashed outline; it is only a picture and stops nothing.
+- **Shots:** a short trail of dots follows every shot. A Power Shot is bigger and orange, with a
+  bigger muzzle flash.
+- **Readability:** names on the battlefield use darker team colours (contrast at least 4.5 : 1
+  against the sky); the chosen character has a thicker yellow box; buttons light up under the
+  mouse.
+- **Result screen:** a coloured title band (the winner's colour, or amber for a draw) with
+  "Victory by elimination" or "Time limit reached", and "Final round: N / 30".
+
 ## The run to the cannon (M3.4-C)
 - **One shared cannon per team.** Every character of a team attacks through the same cannon,
   which stands in front of the team's cover. The shot always starts at the cannon, and its
@@ -278,7 +308,7 @@ python -m unittest discover tests
 | File | Purpose |
 |---|---|
 | `main.py` | Pygame window, screens (team selection, cover placement, battle, result), buttons, mouse and keyboard input, the computer's turn, when an attack is fired (after the run), drawing and the main loop |
-| `drawing.py` | The screens' shared look: colours, text, character figures (standing, running, firing) and buttons (moved out of `main.py` in M3.4-B; with `main.py`, the only files that use Pygame) |
+| `drawing.py` | The screens' shared look: colours, text, character figures (standing, running, firing), cover blocks (cracks, destroyed outline), HP-bar colours and buttons (moved out of `main.py` in M3.4-B; with `main.py`, the only files that use Pygame) |
 | `animation.py` | `CannonRun` (M3.4-C): the states and frames of a character's run to the cannon and back, and where to draw it; no Pygame, never changes the Battle |
 | `ai.py` | `AIController`: the computer opponent (team and cover choice, Defend / Attack / Special choice, cover-aware aiming) and its difficulty table |
 | `battle.py` | Cannons, projectile physics, collision along the flight path, explosions and cover, turns, the round limit and victory; `Team` and team combat (Attack / Defend / Special); `path_contacts` for the computer's planning |
@@ -289,7 +319,7 @@ python -m unittest discover tests
 | `docs/M3.1_balance_analysis.md` | M3.1 analysis of Defend and Repair (recommendations only, nothing changed) |
 | `docs/M3.2_balance_report.md` | M3.2 balance experiment under the old castle rules (historical; its script is in commit `86b90fa`) |
 | `docs/M3.2_benchmark_results.md`, `docs/M3.2_benchmark_results_easy.md` | That benchmark's generated result tables (historical) |
-| `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules (updated for M3.4-C) |
+| `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules (updated for M4.1) |
 | `docs/Rebound_reference_review.md` | Review of a reference project (ideas only) |
 
 ## References

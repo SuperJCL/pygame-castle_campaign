@@ -1,14 +1,15 @@
 # Castle Siege — M0 Requirements and Architecture
 
-Status: **Revision 3 (M2.3), updated for M3.4-C.** This is the living design document. The game
-is implemented up to M3.4-C (Player vs AI, two-player hot seat, the M3.2 balance numbers, the
+Status: **Revision 3 (M2.3), updated for M4.1.** This is the living design document. The game
+is implemented up to M4.1 (Player vs AI, two-player hot seat, the M3.2 balance numbers, the
 M3.3 match flow, the M3.4-A redesign: elimination-only victory and deployable cover, M3.4-B: the
 cover placement screen and a cover-aware computer opponent, M3.4-B.1: Easy's aiming error
-lowered so that its matches finish, and M3.4-C: the character-to-cannon animation). Revision 3's
+lowered so that its matches finish, M3.4-C: the character-to-cannon animation, and M4.1: interface
+and visual polish, cosmetic only). Revision 3's
 final decisions and the M3.2 / M3.3 / M3.4 changes, just below, override anything older in this
 document; **where they disagree, the later M3.4 block wins (M3.4-C, then M3.4-B, then M3.4-A).**
 The AI that was built differs from the plan in §6.3; see §14, "M3.1 notes" and "M3.4-B notes".
-The course-compliance checklist is `docs/M3.3_course_compliance.md` (updated for M3.4-C).
+The course-compliance checklist is `docs/M3.3_course_compliance.md` (updated for M4.1).
 
 ### Revision 3 — final decisions (made by the PM and the user in M2.3)
 - **Alternating turns are the final design. Simultaneous turns are cancelled.** The left team
@@ -158,6 +159,23 @@ screen and the AI redesign are M3.4-B, the run-to-cannon animation M3.4-C.
   action and special, AI difficulty settings, elimination-only victory, the 30-round timeout,
   rematch alternation, every mode and team size.
 - Details are in §14, "M3.4-C notes". Human play-testing is pending.
+
+### M4.1 — interface and visual polish (cosmetic only)
+- **No gameplay change:** rules, character numbers, AI decisions and difficulty, placement
+  validity, physics, the round limit, EXP and rematch logic are untouched; `battle.py`,
+  `castle.py`, `characters.py`, `ai.py` and `animation.py` did not change.
+- **Text:** a turn banner (team colour) with the phase (aim and act / running to the cannon /
+  shot in the air / thinking... / waiting / game over); the HUD message keeps the outcome of an
+  action (round and EXP lines only in the log); no "choose" prompt when the computer moves first
+  or after the game ends; no chosen-character marker while the computer thinks.
+- **Feedback:** floating damage numbers ("-28", "DEFEATED", "shielded"), see-through explosions,
+  cracked blocks (below 80 % / 40 % HP) and a dashed outline where a block was destroyed, a shot
+  trail, a bigger orange Power Shot, HP bars with an outline and a red quarter, the aim in the
+  panel (with a power bar) and under the active cannon.
+- **Screens:** "THE COMPUTER PICKS" on the computer's cards, budget squares, a frame around the
+  cover slots and an "×" on slots that can't take a block, button hover, darker labels on the sky
+  (contrast at least 4.5 : 1), win and draw result banners, "Final round: N / 30".
+- Details (the audit, before/after, tests) are in §14, "M4.1 notes". Human acceptance is pending.
 
 Revision 2's original header: *draft for project-manager review; M0 design only.*
 
@@ -1032,6 +1050,9 @@ open (see M3). The original plan follows.
   animation for people and the computer, `animation.py`, `AIController.carry_out` (§14, "M3.4-C
   notes").
 - **Next:** M4, only after PM approval.
+
+**M4 status:** M4.1 (interface and visual polish, cosmetic only) done, awaiting PM review; it
+covers this section's crack lines and visible event feedback. Sound is M4.2, after PM approval.
 
 **Updated in M2.3.**
 - **Required:** Player vs AI.
@@ -2011,3 +2032,68 @@ mid-run reset the match; Esc closed the game. Frames with a run took 1.5 ms medi
 - The name and HP bar don't follow the runner.
 - No sprites, sound, particles or screen shake.
 - Human play-testing of the look and feel is pending.
+
+### M4.1 notes (interface and visual polish, cosmetic only)
+**Brief:** make the turn, the chosen character, the available actions, HP, cooldowns, the aim,
+a shot in flight, the computer's thinking and Cover Guard immediately clear, without changing any
+mechanic. Audit first (read-only, with screenshots), then fix by priority.
+
+**Audit (before any change; seeded headless screenshots of selection, placement, a 3v3 battle,
+the chosen character and HUD, the computer's turn, Defend and Cover Guard, the run, an explosion,
+a win and a timeout draw).** P1 = wrong or misleading information, or feedback that hides what
+happened; P2 = clarity and readability; P3 = small polish.
+
+| # | Pri | Finding | Change |
+|---|---|---|---|
+| 1 | P1 | When the computer moves first, the HUD said "Choose a character, aim, then choose an action." | "The computer (RIGHT) moves first." |
+| 2 | P1 | After a shot the HUD line ended on "--- Round 2 ---" or "... gains 10 EXP."; the damage line was lost | The HUD keeps the outcome; round and EXP lines only in the log |
+| 3 | P1 | While the computer thought, its slot-1 character was marked and shown as if chosen | No marker; "The computer is thinking about its move." |
+| 4 | P1 | After the game: "Click a character or press 1-3 ..." and an active cannon ring | "The game is over."; no ring |
+| 5 | P1 | An opaque explosion disc hid the character it hit | See-through explosions (alpha 160, fading) |
+| 6 | P1 | A hit showed only as a slightly shorter 6 px HP bar | Floating "-28" / "DEFEATED" / "shielded" for 1 s |
+| 7 | P1 | Win and draw looked the same except the title; "Rounds played" | Winner-colour or amber title band, "Victory by elimination" / "Time limit reached", "Final round: N / 30" |
+| 8 | P2 | The turn was only coloured text, with no phase | Team-coloured turn banner with the phase |
+| 9 | P2 | The aim was tiny panel text | "Angle 50°  Power 55" in a larger font with a power bar, and "50° / 55" under the active cannon |
+| 10 | P2 | Team-coloured names on the sky had contrast 3.2 : 1 (blue) and 2.8 : 1 (red) | Darker label colours: 5.8 : 1 and 4.8 : 1 |
+| 11 | P2 | HP bars: no outline, green/orange only | Outline; red at a quarter or less |
+| 12 | P2 | Damaged blocks only darker; destroyed blocks vanished | Cracks below 80 % / 40 % HP; a dashed outline where a block was destroyed |
+| 13 | P2 | A Power Shot looked like an attack | Bigger, orange, with a bigger flash; a dotted trail behind every shot |
+| 14–15 | P2 | Thin chosen-character box; no button hover | 3 px box; buttons light up under the mouse |
+| 16 | P2 | The computer's cards were barely greyed | A "THE COMPUTER PICKS" band |
+| 17 | P2 | "No block allowed" slots nearly invisible; budget only as text; tiny slot area | An "×", six budget squares, a frame around the slots |
+| 18 | P3 | The result hint sat on the overlay's edge | A taller overlay |
+
+Not changed: the run's timing (no demonstrated problem), the Cover Guard look (already clear),
+the selection-screen buttons (chosen = gold is clear), figure sizes (they match the hit boxes).
+
+**Where:** `main.py` (texts, HUD, panel, battlefield, result, selection and cover screens) and
+`drawing.py` (colours, `hp_bar_color`, `block_cracks`, `draw_block`, `draw_rubble_outline`,
+`draw_outlined_text`, button hover). The Battle is only read. Floaters and the trail live in
+`Game` and are cleared by every new match.
+
+**Hint text:** the panel's middle column (390 px, from y 664) has room for three tiny lines; the
+old aim line plus the Archer's two-line special and its attack line needed four (to y 736). The
+aim moved to its own line and the attack line got shorter; a test checks every role, with the
+special ready and recharging.
+
+**Verification:**
+- **Tests:** `InterfacePolishTest` (18 tests), and the result tests now expect "Final round".
+  Full suite: 348 tests (330 before); with Pygame all pass; without Pygame 224 pass and the 124
+  `test_main` tests are skipped. No combat-rule test changed. These
+  tests check text and drawn pixels; they don't replace a person looking at the game.
+- **Before/after screenshots** of the same seeded scenes (the throwaway `ui_scenes.py`).
+- **The M3.4-C frame-by-frame run check**, re-run on the new drawing: no problems.
+- **Real window** (posted Windows mouse and keyboard messages): cover by mouse, Enter, arrow
+  keys (the panel showed the new aim), SPACE (banner "running to the cannon", then "shot in the
+  air"), the computer's turn (banner "thinking...", no chosen character), R with the computer
+  moving first (no "choose" prompt), Esc: all passed. Hover could not be shown this way: SDL
+  follows the posted move with the real cursor position, and the check never moves the user's
+  cursor, so hover is covered only by a test that fakes the mouse position. Frames took 1.9 ms
+  median and at most 6.5 ms, except the very first frame (22 ms, fonts loading).
+
+**Remaining visual limits:**
+- Figures stay small (they match the 28 × 44 hit boxes), so the battlefield is mostly sky.
+- Several floating words over neighbouring characters (45 px apart) can overlap.
+- Red/green HP colours are backed up by the bar's length, but team identity is still mostly colour.
+- The default Pygame font has no bold, so the hierarchy relies on size and colour.
+- Human acceptance is pending.

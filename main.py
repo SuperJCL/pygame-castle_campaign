@@ -32,22 +32,27 @@ import pygame
 
 from ai import DIFFICULTY_SETTINGS, AIController, aim_cannon
 from animation import FIRE, FIRE_FRAMES, RUN_TO_CANNON, CannonRun, PendingShot, fires_the_cannon
-from battle import (BLAST_RADIUS, CHARACTER_HEIGHT, FIELD_WIDTH, MAX_TEAM_SIZE, ROUND_LIMIT, SLOT_X,
-                    Battle, Cannon, direction, other_side)
+from battle import (BLAST_RADIUS, CHARACTER_HEIGHT, FIELD_WIDTH, MAX_POWER, MAX_TEAM_SIZE, MIN_POWER,
+                    ROUND_LIMIT, SLOT_X, Battle, Cannon, direction, other_side)
 from castle import (BLOCK_SIZE, COLUMN_X, DEFAULT_LAYOUT, GROUND_Y, MAX_BLOCKS, SLOT_COUNT,
                     layout_problem, place_block, remove_block, slot_position)
 from characters import ARCHETYPES, MAX_LEVEL, Archer
-from drawing import (ACTIVE_RING_COLOR, AIM_COLOR, CANNON_COLOR, COOLDOWN_COLOR, DEFEATED_COLOR,
-                     DEFEND_COLOR, DIM_TEXT, FLASH_COLOR, FLASH_EDGE, GROUND_COLOR, GUARD_COLOR,
-                     LIGHT_TEXT, MENU_COLOR, OPEN_SLOT_COLOR, PANEL_COLOR, READY_COLOR, SHOT_COLOR,
-                     SKY_COLOR, TEAM_COLORS, TEXT_COLOR, WOOD, Button, block_color, draw_figure,
-                     draw_firing_figure, draw_running_figure, draw_text, hp_bar_width, wrap_text)
+from drawing import (ACTIVE_RING_COLOR, AIM_COLOR, BUTTON_OFF, CANNON_COLOR, CLOSED_SLOT_COLOR,
+                     COOLDOWN_COLOR, DAMAGE_COLOR, DEFEATED_COLOR, DEFEND_COLOR, DIM_TEXT, DRAW_COLOR,
+                     FLASH_COLOR, FLASH_EDGE, GROUND_COLOR, GUARD_COLOR, LABEL_COLORS, LIGHT_TEXT,
+                     MENU_COLOR, OPEN_SLOT_COLOR, PANEL_COLOR, POWER_SHOT_COLOR, READY_COLOR, SHOT_COLOR,
+                     SKY_COLOR, TEAM_COLORS, TEXT_COLOR, TRAIL_COLOR, WOOD, Button, block_color, draw_block,
+                     draw_figure, draw_firing_figure, draw_outlined_text, draw_rubble_outline,
+                     draw_running_figure, draw_text, hp_bar_color, hp_bar_width, wrap_text)
 
 WINDOW_WIDTH = FIELD_WIDTH        # 1280
 WINDOW_HEIGHT = 720
 FPS = 60
 AI_DELAY_FRAMES = 40              # the computer waits this long (2/3 s) before it acts
 EXPLOSION_FRAMES = 20             # how long an explosion stays on screen
+EXPLOSION_ALPHA = 160             # explosions are see-through (0-255), so the target stays visible
+FLOAT_FRAMES = 60                 # a floating damage number stays 1 s, rising slowly
+TRAIL_LENGTH = 12                 # dots behind a flying shot
 LOG_LINES = 6                     # combat-log lines shown at once
 PANEL_TOP = 580                   # the control panel fills the bottom of the window
 COVER_HELP_TOP = 122              # the placement screen's instructions start at this y ...
@@ -71,6 +76,11 @@ def guard_badge_rect(side):
     badge = pygame.Rect(0, 0, 84, 20)
     badge.center = (center_x, GROUND_Y - 2 * BLOCK_SIZE - 20)       # y 476: above the raised row
     return badge
+
+
+def result_banner_rect():
+    """The coloured title band of the result overlay: the winner's colour, or DRAW_COLOR."""
+    return pygame.Rect(310, 120, 660, 90)
 
 
 def muzzle_point(cannon):
@@ -234,6 +244,9 @@ class Game:
         self.cannon_run = CannonRun()  # an attacking character's run to the cannon and back (M3.4-C)
         self.selected = {"left": 0, "right": 0}   # slot of the character chosen to act
         self.explosions = []          # each one is [x, y, age in frames]
+        self.floaters = []            # floating damage numbers: [x, y, text, colour, age in frames]
+        self.trail = []               # the last positions of the flying shot (drawn as dots)
+        self.shot_style = "attack"    # "power" while a Power Shot flies (drawn bigger and orange)
         self.log = []                 # combat-log lines, newest last
         self.message = "Click characters to add them to a team (click again to remove)."
         self.make_buttons()
@@ -290,9 +303,14 @@ class Game:
         self.selected = {"left": 0, "right": 0}
         self.ai_wait = 0
         self.explosions = []
+        self.floaters = []
+        self.trail = []
         first = f"{self.battle.first_side.upper()} team moves first."
         self.log = ["--- Round 1 ---", first]
-        self.message = first + " Choose a character, aim, then choose an action."
+        if self.ai is not None and self.battle.first_side == self.ai.side:
+            self.message = f"The computer ({self.ai.side.upper()}) moves first."   # nothing to do yet
+        else:
+            self.message = first + " Choose a character, aim, then choose an action."
         self.refresh_buttons()
 
     def try_start(self):
@@ -435,6 +453,7 @@ class Game:
             fired = self.battle.perform_action(shot.actor_index, shot.action)
         if not fired:
             self.cannon_run.cancel()      # not possible in play; the log says why it was refused
+        self.shot_style = "power" if shot.action == "special" else "attack"   # only how it is drawn
 
     # ----- input -------------------------------------------------------------------
 
@@ -581,6 +600,12 @@ class Game:
             for explosion in self.explosions:
                 explosion[2] += 1
             self.explosions = [e for e in self.explosions if e[2] < EXPLOSION_FRAMES]
+            for floater in self.floaters:             # rise slowly, then disappear
+                floater[1] -= 0.5
+                floater[4] += 1
+            self.floaters = [f for f in self.floaters if f[4] < FLOAT_FRAMES]
+            shot = self.battle.projectile
+            self.trail = (self.trail + [(shot.x, shot.y)])[-TRAIL_LENGTH:] if shot is not None else []
         self.refresh_buttons()
 
     def update_ai(self):
@@ -610,17 +635,41 @@ class Game:
         """React to one battle event: effects, the log, and the end of the game."""
         if event["type"] == "explosion":
             self.explosions.append([event["x"], event["y"], 0])
+            target = other_side(event["side"])
+            for name in event["covered"]:
+                self.add_floater(target, name, "shielded", GUARD_COLOR)
+            for hit in event["characters_hit"]:
+                self.add_floater(target, hit["name"], f"-{hit['damage']}", DAMAGE_COLOR)
+                if hit["defeated"]:
+                    self.add_floater(target, hit["name"], "DEFEATED", DAMAGE_COLOR, below=True)
         elif event["type"] == "game_over":
             self.state = "result"
         lines = describe_event(event)
         if lines:
             self.log = (self.log + lines)[-50:]
-            self.message = lines[-1]
+            # The HUD keeps the outcome of the action: a new round or EXP is only in the log.
+            if event["type"] not in ("round", "exp"):
+                self.message = lines[-1]
+
+    def add_floater(self, side, name, text, color, below=False):
+        """A word or number floating up from above a character (M4.1): "-28", "DEFEATED", "shielded"."""
+        team = self.battle.teams[side]
+        index = next(i for i, character in enumerate(team.characters) if character.name == name)
+        rect = pygame.Rect(team.character_rect(index))
+        top = rect.top - 48 - (24 if index == 1 else 0)            # above its name and HP bar
+        self.floaters.append([rect.centerx, top + (18 if below else 0), text, color, 0])
 
     # ----- text shown on the battle screen --------------------------------------------
 
+    def ai_thinking(self):
+        """True while it is the computer's turn and it has not chosen yet (its 2/3 s pause)."""
+        return self.is_ai_turn() and not self.cannon_run.is_busy()
+
     def selected_info_lines(self):
         """The panel text about the character chosen to act."""
+        if self.ai_thinking():                   # nobody is chosen yet: don't show a character
+            return [f"{self.battle.active_side.upper()} TEAM: the computer ({self.ai.difficulty.capitalize()})",
+                    "The computer is thinking about its move.", "", ""]
         character = self.selected_character()
         team = self.battle.teams[self.battle.active_side]
         if character.level == MAX_LEVEL:
@@ -631,7 +680,9 @@ class Game:
             special_text = f"{character.SPECIAL_NAME}: ready"
         else:
             special_text = character.special_blocked_reason(team)
-        if character.is_defending:
+        if self.battle.is_over():
+            status = "The game is over."
+        elif character.is_defending:
             status = "Defending until your next turn."
         elif self.ai is not None and self.battle.active_side == self.ai.side:
             status = "Played by the computer."
@@ -645,8 +696,8 @@ class Game:
                 stats, special_text, status]
 
     def action_hint_lines(self):
-        """The panel text under the action buttons: the aim and what SPECIAL would do."""
-        cannon = self.battle.cannons[self.battle.active_side]
+        """The panel text under the aim line: what SPECIAL would do, or what is happening.
+        (The aim itself is shown by aim_text, in a bigger font, with a power bar.)"""
         character = self.selected_character()
         if self.battle.is_over():
             return ["The game is over: choose Rematch or Change teams."]
@@ -654,20 +705,53 @@ class Game:
             return [self.cannon_run_text()]
         if self.is_ai_turn():
             return [f"The computer ({self.ai.difficulty.capitalize()}) is choosing the RIGHT team's move..."]
-        lines = [f"Aim: angle {cannon.angle}°, power {cannon.power}  (arrow keys, Shift = 5)"]
         if self.battle.projectile is not None:
-            lines.append("The shot is in the air...")
-            return lines
+            return ["The shot is in the air..."]
         reason = self.battle.why_not_allowed(self.selected_index(), "special")
         if reason is None:
-            lines.append(f"SPECIAL = {character.SPECIAL_NAME}: {character.SPECIAL_DESCRIPTION}")
+            lines = [f"SPECIAL = {character.SPECIAL_NAME}: {character.SPECIAL_DESCRIPTION}"]
         else:
-            lines.append(f"SPECIAL unavailable: {reason}.")
+            lines = [f"SPECIAL unavailable: {reason}."]
         if isinstance(character, Archer):
-            lines.append("ATTACK and Power Shot fire with this aim. SPACE = ATTACK.")
+            lines.append("ATTACK, SPACE and Power Shot use this aim. Arrows aim.")
         else:
-            lines.append("ATTACK fires with this aim. SPACE = ATTACK.")
+            lines.append("ATTACK (or SPACE) fires with this aim. Arrows aim.")
         return lines
+
+    def aim_text(self):
+        """The active cannon's aim, shown large in the panel."""
+        cannon = self.battle.cannons[self.battle.active_side]
+        return f"Angle {cannon.angle}°   Power {cannon.power}"
+
+    @staticmethod
+    def cannon_label(cannon):
+        """The short aim label drawn under the active cannon."""
+        return f"{cannon.angle}° / {cannon.power}"
+
+    def phase_text(self):
+        """What is happening in this turn, for the turn banner."""
+        if self.battle.is_over():
+            return "game over"
+        if self.battle.projectile is not None:
+            return "shot in the air"
+        if self.cannon_run.is_busy():
+            if self.cannon_run.shot.side != self.battle.active_side:
+                return "waiting"                    # the last shooter is still running back
+            return "running to the cannon" if self.cannon_run.state == RUN_TO_CANNON else "running back"
+        if self.is_ai_turn():
+            return "thinking..."
+        return "aim and act"
+
+    def hud_turn_text(self):
+        """The turn banner: the round, whose turn it is (and who plays it) and the phase."""
+        heading = f"Round {self.battle.round_number} / {ROUND_LIMIT}   "
+        if self.battle.is_over():
+            return heading + "GAME OVER"
+        side = self.battle.active_side
+        player = ""
+        if self.ai is not None:
+            player = " (computer)" if side == self.ai.side else " (you)"
+        return f"{heading}{side.upper()} TEAM'S TURN{player}: {self.phase_text()}"
 
     def cannon_run_text(self):
         """The panel line while a character runs to the cannon or back to its slot."""
@@ -693,7 +777,16 @@ class Game:
         return f"Every {loser} character was defeated."
 
     def result_rounds(self):
-        return f"Rounds played: {self.battle.round_number}"
+        """The round in which the match ended (it can end in the middle of a round)."""
+        return f"Final round: {self.battle.round_number} / {ROUND_LIMIT}"
+
+    def result_subtitle(self):
+        """A few words under the result title, so a win and a draw read differently."""
+        if self.battle.end_reason == "timeout":
+            return "Time limit reached"
+        if self.battle.end_reason == "both_lost":
+            return "Both teams fell together"
+        return "Victory by elimination"
 
     # ----- drawing: team selection ---------------------------------------------------------
 
@@ -768,6 +861,10 @@ class Game:
             label = f"Slot {slot}" + (" (front)" if slot == 1 else "")
             draw_text(self.screen, label, self.small_font, TEAM_COLORS[side],
                       center=(rect.centerx, rect.bottom - 18))
+        elif computer_team:                       # M4.1: say plainly that these cards can't be clicked
+            band = pygame.Rect(rect.left + 6, rect.bottom - 32, rect.width - 12, 26)
+            pygame.draw.rect(self.screen, BUTTON_OFF, band, border_radius=4)
+            draw_text(self.screen, "THE COMPUTER PICKS", self.tiny_font, LIGHT_TEXT, center=band.center)
 
     # ----- drawing: cover placement ------------------------------------------------
 
@@ -776,6 +873,11 @@ class Game:
 
     def cover_count_text(self):
         return f"Blocks: {len(self.setup.layouts[self.placing])} / {MAX_BLOCKS}"
+
+    def budget_pip_rects(self):
+        """MAX_BLOCKS small squares right of "Blocks: n / 6", one per block of the budget (M4.1)."""
+        first_x = WINDOW_WIDTH // 2 + self.font.size(self.cover_count_text())[0] // 2 + 14
+        return [pygame.Rect(first_x + i * 19, 79, 14, 14) for i in range(MAX_BLOCKS)]
 
     def cover_help_lines(self):
         return ["Click an empty slot to place a block (100 HP). Click a block to remove it.",
@@ -808,6 +910,11 @@ class Game:
         draw_text(self.screen, self.cover_title(), self.title_font, TEAM_COLORS[side],
                   center=(WINDOW_WIDTH // 2, 42))
         draw_text(self.screen, self.cover_count_text(), self.font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 86))
+        used = len(self.setup.layouts[side])
+        for i, pip in enumerate(self.budget_pip_rects()):
+            if i < used:
+                pygame.draw.rect(self.screen, block_color(side, 1, 1), pip)
+            pygame.draw.rect(self.screen, TEXT_COLOR if i < used else DIM_TEXT, pip, 1)
         for i, line in enumerate(self.cover_help_lines()):
             draw_text(self.screen, line, self.small_font, TEXT_COLOR,
                       center=(WINDOW_WIDTH // 2, COVER_HELP_TOP + i * COVER_HELP_STEP))
@@ -815,14 +922,17 @@ class Game:
         for index, role in enumerate(self.selection.picks[side]):
             center_x, top = SLOT_X[side][index], GROUND_Y - CHARACTER_HEIGHT
             draw_figure(self.screen, role, center_x, top, direction(side), TEAM_COLORS[side])
-            draw_text(self.screen, role.__name__, self.tiny_font, TEAM_COLORS[side],
+            draw_text(self.screen, role.__name__, self.tiny_font, LABEL_COLORS[side],
                       center=(center_x, top - 14 - (18 if index == 1 else 0)))
         self.draw_cannon(Cannon(side), is_active=False)
+        # A frame around the 8 slots, so the small area to click stands out on the big screen.
+        frame = pygame.Rect(min(COLUMN_X[side]) - 5, GROUND_Y - 2 * BLOCK_SIZE - 6, 4 * BLOCK_SIZE + 10,
+                            2 * BLOCK_SIZE + 6)
+        pygame.draw.rect(self.screen, LABEL_COLORS[side], frame, 2, border_radius=6)
         for slot in range(SLOT_COUNT):
             self.draw_slot(side, slot, self.setup.layouts[side])
-        middle_x = COLUMN_X["left"][0] + 2 * BLOCK_SIZE                 # over the four slot columns
-        draw_text(self.screen, "COVER SLOTS", self.tiny_font, TEAM_COLORS[side],
-                  center=(middle_x if side == "left" else WINDOW_WIDTH - middle_x, GROUND_Y - 2 * BLOCK_SIZE - 12))
+        draw_text(self.screen, "COVER SLOTS", self.tiny_font, LABEL_COLORS[side],
+                  center=(frame.centerx, frame.top - 9))
         other = other_side(side)
         if side == "right":
             note = "LEFT's cover stays hidden until the battle starts."
@@ -830,7 +940,7 @@ class Game:
             note = "The computer places the RIGHT cover when the battle starts."
         else:
             note = "RIGHT places its own cover next, without seeing LEFT's."
-        draw_text(self.screen, note, self.small_font, TEAM_COLORS[other],
+        draw_text(self.screen, note, self.small_font, LABEL_COLORS[other],
                   center=(WINDOW_WIDTH // 4 * (3 if other == "right" else 1), 420))
         pygame.draw.rect(self.screen, PANEL_COLOR, (0, PANEL_TOP, WINDOW_WIDTH, WINDOW_HEIGHT - PANEL_TOP))
         draw_text(self.screen, self.message, self.small_font, LIGHT_TEXT, center=(WINDOW_WIDTH // 2, PANEL_TOP + 22))
@@ -855,7 +965,7 @@ class Game:
                 pygame.draw.rect(self.screen, OPEN_SLOT_COLOR, sample)
                 pygame.draw.rect(self.screen, TEAM_COLORS[side], sample, 2)
             else:
-                pygame.draw.rect(self.screen, DIM_TEXT, sample, 1)
+                self.draw_closed_slot(sample)
             draw_text(self.screen, text, self.small_font, TEXT_COLOR, midleft=(x + 30, y))
             x += width + 50
 
@@ -871,7 +981,17 @@ class Game:
             pygame.draw.rect(self.screen, TEAM_COLORS[side], rect, 2)
             draw_text(self.screen, "+", self.font, TEAM_COLORS[side], center=rect.center)
         else:
-            pygame.draw.rect(self.screen, DIM_TEXT, rect, 1)
+            self.draw_closed_slot(rect)
+
+    def draw_closed_slot(self, rect):
+        """A slot that can't take a block right now: an outline with an "x" (M4.1: it was
+        only a faint outline)."""
+        pygame.draw.rect(self.screen, DIM_TEXT, rect, 1)
+        inset = rect.width // 4
+        pygame.draw.line(self.screen, CLOSED_SLOT_COLOR, (rect.left + inset, rect.top + inset),
+                         (rect.right - 1 - inset, rect.bottom - 1 - inset), 2)
+        pygame.draw.line(self.screen, CLOSED_SLOT_COLOR, (rect.right - 1 - inset, rect.top + inset),
+                         (rect.left + inset, rect.bottom - 1 - inset), 2)
 
     # ----- drawing: the battlefield --------------------------------------------------
 
@@ -879,30 +999,47 @@ class Game:
         self.screen.fill(SKY_COLOR)
         pygame.draw.rect(self.screen, GROUND_COLOR, (0, GROUND_Y, WINDOW_WIDTH, PANEL_TOP - GROUND_Y))
         for side, castle in self.battle.castles.items():
-            for block in castle.alive_blocks():
-                rect = (block.x, block.y, block.size, block.size)
-                pygame.draw.rect(self.screen, block_color(side, block.hp, block.max_hp), rect)
-                pygame.draw.rect(self.screen, TEXT_COLOR, rect, 1)
+            for block in castle.blocks:
+                if block.is_destroyed():              # M4.1: show where cover used to be
+                    draw_rubble_outline(self.screen, block.x, block.y, block.size)
+                else:
+                    draw_block(self.screen, side, block.x, block.y, block.size, block.hp, block.max_hp)
             # Asked from the Battle on every frame, so it can never be out of date.
             if self.battle.castle_guarded(side):
                 self.draw_castle_guard(side, castle)
         self.draw_characters()
         for side, cannon in self.battle.cannons.items():
-            self.draw_cannon(cannon, is_active=(side == self.battle.active_side))
+            self.draw_cannon(cannon, is_active=(side == self.battle.active_side and not self.battle.is_over()))
         if self.cannon_run.state == FIRE:            # starts on the frame the shot is launched
             self.draw_muzzle_flash(self.battle.cannons[self.cannon_run.shot.side])
         if self.battle.can_fire():
-            self.draw_aim_arrow(self.battle.cannons[self.battle.active_side])
+            cannon = self.battle.cannons[self.battle.active_side]
+            self.draw_aim_arrow(cannon)
+            draw_text(self.screen, self.cannon_label(cannon), self.tiny_font, READY_COLOR,
+                      center=(cannon.x, GROUND_Y + 10))
+        for x, y in self.trail[:-1]:                 # dots where the shot has just been
+            pygame.draw.circle(self.screen, TRAIL_COLOR, (round(x), round(y)), 2)
         if self.battle.projectile is not None:
-            shot = self.battle.projectile
-            pygame.draw.circle(self.screen, SHOT_COLOR, (round(shot.x), round(shot.y)), 5)
+            shot = (round(self.battle.projectile.x), round(self.battle.projectile.y))
+            if self.shot_style == "power":           # a Power Shot: bigger and orange
+                pygame.draw.circle(self.screen, FLASH_COLOR, shot, 9)
+                pygame.draw.circle(self.screen, POWER_SHOT_COLOR, shot, 7)
+            else:
+                pygame.draw.circle(self.screen, SHOT_COLOR, shot, 5)
         # An explosion is a circle that grows to the blast radius while fading from yellow to red.
+        # It is see-through (M4.1), so the character it hits can still be seen.
         for x, y, age in self.explosions:
             progress = age / EXPLOSION_FRAMES
             radius = int(8 + (BLAST_RADIUS - 8) * progress)
             color = (255, int(220 - 150 * progress), int(80 - 60 * progress))
-            pygame.draw.circle(self.screen, color, (round(x), round(y)), radius,
+            alpha = int(EXPLOSION_ALPHA * (1 - 0.5 * progress))
+            circle = pygame.Surface((2 * radius + 2, 2 * radius + 2), pygame.SRCALPHA)
+            pygame.draw.circle(circle, color + (alpha,), (radius + 1, radius + 1), radius,
                                0 if progress < 0.5 else 4)
+            self.screen.blit(circle, (round(x) - radius - 1, round(y) - radius - 1))
+        for x, y, text, color, _ in self.floaters:   # "-28", "DEFEATED", "shielded"
+            font = self.small_font if text.startswith("-") else self.tiny_font
+            draw_outlined_text(self.screen, text, font, color, (255, 255, 255), center=(x, round(y)))
 
     def draw_castle_guard(self, side, castle):
         """Cover Guard is on: a blue outline on every standing block, and a GUARDED badge."""
@@ -934,7 +1071,7 @@ class Game:
                     else:
                         draw_figure(self.screen, type(character), rect.centerx, rect.top,
                                     direction(side), TEAM_COLORS[side])
-                    name_color = TEAM_COLORS[side]
+                    name_color = LABEL_COLORS[side]
                 else:
                     # Defeated: a grey shape lying on the ground.
                     pygame.draw.rect(self.screen, DEFEATED_COLOR, (rect.left - 4, rect.bottom - 9, rect.width + 8, 9),
@@ -944,8 +1081,9 @@ class Game:
                           center=(rect.centerx, label_y))
                 bar = pygame.Rect(rect.centerx - 20, label_y + 8, 40, 6)
                 pygame.draw.rect(self.screen, (60, 60, 60), bar)
-                fill = (60, 190, 70) if character.hp * 2 > character.max_hp else (220, 120, 40)
-                pygame.draw.rect(self.screen, fill, (bar.left, bar.top, hp_bar_width(character, bar.width), bar.height))
+                pygame.draw.rect(self.screen, hp_bar_color(character),
+                                 (bar.left, bar.top, hp_bar_width(character, bar.width), bar.height))
+                pygame.draw.rect(self.screen, TEXT_COLOR, bar.inflate(2, 2), 1)      # outline
                 if character.is_alive():                        # special cooldown, under the feet
                     if character.special_cooldown > 0:
                         draw_text(self.screen, f"wait {character.special_cooldown}", self.tiny_font,
@@ -953,8 +1091,9 @@ class Game:
                     else:
                         draw_text(self.screen, "ready", self.tiny_font, READY_COLOR,
                                   center=(rect.centerx, GROUND_Y + 10))
-                if side == acting_side and index == chosen and character.is_alive() and not running:
-                    pygame.draw.rect(self.screen, ACTIVE_RING_COLOR, rect.inflate(8, 8), 2)
+                if (side == acting_side and index == chosen and character.is_alive() and not running
+                        and not self.ai_thinking()):     # the computer hasn't chosen anyone yet
+                    pygame.draw.rect(self.screen, ACTIVE_RING_COLOR, rect.inflate(8, 8), 3)
                     tip_y = label_y - 10
                     pygame.draw.polygon(self.screen, ACTIVE_RING_COLOR,
                                         [(rect.centerx - 7, tip_y - 10), (rect.centerx + 7, tip_y - 10),
@@ -975,6 +1114,8 @@ class Game:
         """A short flash at the barrel's tip while the shot leaves it, shrinking over FIRE_FRAMES.
         The cannon itself never moves."""
         radius = round(12 - 7 * self.cannon_run.frame / FIRE_FRAMES)
+        if self.shot_style == "power":
+            radius = round(radius * 1.5)          # M4.1: a Power Shot gets a bigger flash
         center = muzzle_point(cannon)
         pygame.draw.circle(self.screen, FLASH_EDGE, center, radius)
         pygame.draw.circle(self.screen, FLASH_COLOR, center, max(2, radius // 2))
@@ -1013,18 +1154,20 @@ class Game:
         for side, position in (("left", {"topleft": (20, 15)}),
                                ("right", {"topright": (WINDOW_WIDTH - 20, 15)})):
             draw_text(self.screen, self.hud_team_line(side), self.font, TEXT_COLOR, **position)
-        side = self.battle.active_side
-        if self.battle.is_over():
-            draw_text(self.screen, f"Round {self.battle.round_number} / {ROUND_LIMIT}   -   GAME OVER",
-                      self.font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 27))
-        else:
-            player = ""
-            if self.ai is not None:
-                player = "  (computer)" if side == self.ai.side else "  (you)"
-            draw_text(self.screen, f"Round {self.battle.round_number} / {ROUND_LIMIT}   -   "
-                      f"{side.upper()} TEAM'S TURN{player}",
-                      self.font, TEAM_COLORS[side], center=(WINDOW_WIDTH // 2, 27))
-        draw_text(self.screen, self.message, self.small_font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 58))
+        # The turn banner (M4.1): white text on the colour of the team whose turn it is, saying
+        # what is happening ("aim and act", "shot in the air", "thinking..."); grey once it's over.
+        banner = self.hud_banner_rect()
+        fill = (70, 74, 82) if self.battle.is_over() else TEAM_COLORS[self.battle.active_side]
+        pygame.draw.rect(self.screen, fill, banner, border_radius=12)
+        draw_text(self.screen, self.hud_turn_text(), self.small_font, (255, 255, 255), center=banner.center)
+        draw_text(self.screen, self.message, self.small_font, TEXT_COLOR, center=(WINDOW_WIDTH // 2, 62))
+
+    def hud_banner_rect(self):
+        """Where the turn banner is drawn: centred at the top, sized to its text."""
+        width, height = self.small_font.size(self.hud_turn_text())
+        banner = pygame.Rect(0, 0, width + 28, height + 14)
+        banner.center = (WINDOW_WIDTH // 2, 27)
+        return banner
 
     def draw_panel(self):
         pygame.draw.rect(self.screen, PANEL_COLOR, (0, PANEL_TOP, WINDOW_WIDTH, WINDOW_HEIGHT - PANEL_TOP))
@@ -1034,10 +1177,19 @@ class Game:
             if i == 0:
                 color = tuple(min(255, c + 70) for c in color)      # brighter on the dark panel
             draw_text(self.screen, line, self.small_font, color, topleft=(20, PANEL_TOP + 12 + i * 30))
-        # Middle: the three action buttons and what they will do.
+        # Middle: the three action buttons, the aim (M4.1: large, with a power bar) and what
+        # the buttons will do.
         for button in self.action_buttons.values():
             button.draw(self.screen, self.font)
-        y = PANEL_TOP + 62
+        if not self.battle.is_over():
+            draw_text(self.screen, self.aim_text(), self.small_font, LIGHT_TEXT, topleft=(450, PANEL_TOP + 60))
+            power = self.battle.cannons[self.battle.active_side].power
+            bar = pygame.Rect(660, PANEL_TOP + 64, 170, 10)
+            pygame.draw.rect(self.screen, (60, 66, 78), bar)
+            filled = round(bar.width * (power - MIN_POWER) / (MAX_POWER - MIN_POWER))
+            pygame.draw.rect(self.screen, AIM_COLOR, (bar.left, bar.top, filled, bar.height))
+            pygame.draw.rect(self.screen, DIM_TEXT, bar, 1)
+        y = PANEL_TOP + 84
         for line in self.action_hint_lines():
             for part in wrap_text(line, self.tiny_font, 390):
                 draw_text(self.screen, part, self.tiny_font, LIGHT_TEXT, topleft=(450, y))
@@ -1052,19 +1204,26 @@ class Game:
             draw_text(self.screen, line, self.tiny_font, LIGHT_TEXT, topleft=(860, PANEL_TOP + 28 + i * 19))
 
     def draw_result(self):
-        panel = pygame.Surface((660, 240), pygame.SRCALPHA)
-        panel.fill((0, 0, 0, 180))                                 # semi-transparent black
-        self.screen.blit(panel, panel.get_rect(center=(WINDOW_WIDTH // 2, 250)))
+        banner = result_banner_rect()
+        panel = pygame.Surface((banner.width, 270), pygame.SRCALPHA)
+        panel.fill((0, 0, 0, 190))                                 # semi-transparent black
+        self.screen.blit(panel, banner.topleft)
+        # M4.1: the title band has the winner's colour, or DRAW_COLOR, so a win and a draw
+        # can't be mistaken for each other.
+        fill = DRAW_COLOR if self.battle.winner == "draw" else TEAM_COLORS[self.battle.winner]
+        pygame.draw.rect(self.screen, fill, banner)
         draw_text(self.screen, self.result_title(), self.big_font, (255, 255, 255),
-                  center=(WINDOW_WIDTH // 2, 180))
+                  center=(WINDOW_WIDTH // 2, banner.top + 36))
+        draw_text(self.screen, self.result_subtitle(), self.small_font, (245, 245, 245),
+                  center=(WINDOW_WIDTH // 2, banner.bottom - 14))
         draw_text(self.screen, self.result_reason(), self.font, (230, 230, 230),
-                  center=(WINDOW_WIDTH // 2, 238))
+                  center=(WINDOW_WIDTH // 2, 236))
         draw_text(self.screen, self.result_rounds(), self.small_font, (200, 200, 200),
-                  center=(WINDOW_WIDTH // 2, 270))
+                  center=(WINDOW_WIDTH // 2, 266))
         self.rematch_button.draw(self.screen, self.font)
         self.change_teams_button.draw(self.screen, self.font)
         draw_text(self.screen, "R = rematch     Esc = quit", self.small_font, (220, 220, 220),
-                  center=(WINDOW_WIDTH // 2, 362))
+                  center=(WINDOW_WIDTH // 2, 368))
 
 
 def open_window():

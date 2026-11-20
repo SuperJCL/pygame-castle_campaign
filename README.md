@@ -6,7 +6,7 @@ stands behind its own cover blocks and shares one cannon standing in front of th
 teams take turns: pick a character, aim the cannon, and Attack, Defend or use a Special ability.
 **You win by defeating every enemy character.**
 
-**Current status: Milestone 4.2-A — sound, atmosphere and readability.**
+**Current status: Milestone 4.2-B — Defend redesign (Guarded Strike and the anti-stall rule).**
 - Only elimination wins. Castle destruction is not a victory condition.
 - Before each battle, every team places its own cover: up to 6 blocks on 8 fixed slots. Against
   the computer you place the LEFT cover and the computer places its own.
@@ -21,8 +21,10 @@ teams take turns: pick a character, aim the cannon, and Attack, Defend or use a 
   distinct win and draw screens. **Cosmetic only: no game rule, AI choice or number changed.**
 - M4.2-A: sound effects made in code (M turns them off), a battlefield with a sky, hills and a
   flag for each team, team emblems (LEFT circle, RIGHT diamond) so the teams differ by shape
-  as well as colour, and name plates. **Presentation only: no rule changed.** A redesign of
-  Defend (M4.2-B) is only proposed so far, waiting for approval.
+  as well as colour, and name plates. **Presentation only: no rule changed.**
+- M4.2-B: **a gameplay change**, approved after a design review: a Defend now also gives that
+  character **Guarded Strike** (its Attack in your team's next turn uses ATK × 1.25), and a team
+  **can't Defend two turns in a row**. Defend still halves the damage the defender takes.
 
 You play the LEFT team against a computer opponent (Easy, Normal or Hard), or two people play
 each other on one computer. The design and roadmap are in [docs/M0_design.md](docs/M0_design.md).
@@ -103,7 +105,9 @@ In VS Code you can also pick the `.venv` interpreter (**Python: Select Interpret
        character's stats. The character first runs to the cannon; the shot leaves when it gets
        there, and it runs back while the shot flies.
      - **DEFEND** halves the damage that character takes until your next turn, and also halves
-       the damage enemy shots do to your cover blocks (**Cover Guard**).
+       the damage enemy shots do to your cover blocks (**Cover Guard**). It also gives that
+       character **Guarded Strike** for your next turn (a gold star beside its name), and your
+       team can't DEFEND again on that next turn (the button is greyed out and says why).
      - **SPECIAL** uses its ability. A greyed-out button can't be used right now, and the panel
        says why.
 
@@ -182,6 +186,19 @@ to switch the keyboard to English first.
   - It ends with the Defend, when that team's next turn starts, so it covers one enemy action.
   - Several defenders don't add up: it is always half.
   - Guarded cover has a blue outline and a **GUARDED** badge.
+- **Guarded Strike (M4.2-B):** a basic Defend gives the defender Guarded Strike for its team's
+  **next turn only**.
+  - If that character makes a normal **Attack** in that turn, the shot uses **ATK × 1.25**, then
+    DEF, minimum 1, halved against a defender: the same formula Power Shot uses with × 1.5. For
+    example, a Knight hits an enemy Knight for 25 instead of 18. Block damage is unchanged.
+  - It is used up by that Attack. If another character acts, or the defender uses its special
+    (Power Shot keeps its own × 1.5), it expires at the end of that turn ("expired").
+  - It never stacks, and Rally does not give it.
+  - A hollow gold star beside the name means "next turn"; a filled star means "this turn's
+    Attack is stronger"; "+25%" floats up when it is used.
+- **Anti-stall (M4.2-B):** a team can't Defend two turns in a row (Rally doesn't count). Without
+  this rule, a team that is behind could defend every turn to reach the round-30 draw. The
+  computer has always played this way.
 - **Specials:**
   - **Knight – Rally:** all living allies defend until your next turn (so the cover is guarded
     too). Cooldown 4 rounds.
@@ -305,7 +322,8 @@ what is drawn and what the text says.
   - It picks one of its best aims, then adds a random aiming error. Repair is chosen when
     restoring cover is worth more.
 - **Defending:** when one of its characters is below half HP, it is more likely to Defend (or to
-  use the Knight's Rally). It never defends two turns in a row.
+  use the Knight's Rally). It never defends two turns in a row, so it keeps the anti-stall rule.
+  It imagines its shots with the real rules, so it values a ready Guarded Strike by itself.
 - **Difficulty** changes only how carefully it chooses and how accurately it aims:
 
 | | Easy | Normal | Hard |
@@ -343,8 +361,8 @@ python -m unittest discover tests
 | `docs/M3.1_balance_analysis.md` | M3.1 analysis of Defend and Repair (recommendations only, nothing changed) |
 | `docs/M3.2_balance_report.md` | M3.2 balance experiment under the old castle rules (historical; its script is in commit `86b90fa`) |
 | `docs/M3.2_benchmark_results.md`, `docs/M3.2_benchmark_results_easy.md` | That benchmark's generated result tables (historical) |
-| `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules (updated for M4.2-A) |
-| `docs/M4.2-B_defend_design_review.md` | M4.2-B: an audit of Defend and a proposed redesign, waiting for approval (not built) |
+| `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules (updated for M4.2-B) |
+| `docs/M4.2-B_defend_design_review.md` | M4.2-B: the audit of Defend and the redesign that was approved and built (Guarded Strike, anti-stall) |
 | `docs/Rebound_reference_review.md` | Review of a reference project (ideas only) |
 
 ## References

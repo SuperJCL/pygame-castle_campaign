@@ -49,6 +49,7 @@ from drawing import (ACTIVE_RING_COLOR, AIM_COLOR, BUTTON_OFF, CANNON_COLOR, CLO
                      draw_figure, draw_firing_figure, draw_outlined_text, draw_rubble_outline,
                      draw_running_figure, draw_text, hp_bar_color, hp_bar_width, wrap_text)
 from drawing import EMBLEM_COLOR, EMBLEM_Y, draw_badge, draw_emblem, draw_plate, make_background   # M4.2-A
+from drawing import EXPIRED_COLOR, GUARD_STRIKE_COLOR, draw_guard_mark   # M4.2-B
 from sound import BUFFER, SAMPLE_RATE, SoundBoard
 
 WINDOW_WIDTH = FIELD_WIDTH        # 1280
@@ -129,6 +130,12 @@ def describe_event(event):
         return [f"--- Round {event['number']} ---"]
     if kind == "invalid":
         return [f"Not allowed: {event['reason']}."]
+    if kind == "guard_granted":
+        return [f"{event['side'].upper()} {event['name']}: Guarded Strike next turn (+25% ATK)."]
+    if kind == "guard_used":
+        return [f"{event['side'].upper()} {event['name']} uses Guarded Strike: ATK x1.25."]
+    if kind == "guard_expired":
+        return [f"{event['side'].upper()} {event['name']}'s Guarded Strike expired unused."]
     if kind == "game_over":
         lines = []
         if event["reason"] == "timeout":
@@ -583,6 +590,11 @@ class Game:
             if button.is_clicked(pos):
                 self.do_action(action)
                 return
+            if button.rect.collidepoint(pos):     # greyed out: say why (M4.2-B)
+                reason = self.battle.why_not_allowed(self.selected_index(), action)
+                if reason is not None:
+                    self.message = reason[0].upper() + reason[1:] + "."
+                return
         if not self.battle.can_fire():
             return                                 # can't change who acts while a shot flies
         active = self.battle.active_side
@@ -668,6 +680,10 @@ class Game:
                 self.add_floater(target, hit["name"], f"-{hit['damage']}", DAMAGE_COLOR)
                 if hit["defeated"]:
                     self.add_floater(target, hit["name"], "DEFEATED", DAMAGE_COLOR, below=True)
+        elif event["type"] == "guard_used":            # M4.2-B: the bonus, where the player looks
+            self.add_floater(event["side"], event["name"], "+25%", GUARD_STRIKE_COLOR)
+        elif event["type"] == "guard_expired":
+            self.add_floater(event["side"], event["name"], "expired", EXPIRED_COLOR)
         elif event["type"] == "game_over":
             self.state = "result"
         lines = describe_event(event)
@@ -757,6 +773,8 @@ class Game:
             status = "Played by the computer."
         elif self.cannon_run.is_busy():
             status = self.cannon_run_text()      # the controls wait for the runner
+        elif character.guarded_strike_ready:
+            status = "Guarded Strike ready: ATTACK +25% this turn."
         else:
             status = "Click a character or press 1-3 to choose who acts."
         stats = (f"HP {character.hp}/{character.max_hp}   ATK {character.atk}   "
@@ -781,7 +799,12 @@ class Game:
             lines = [f"SPECIAL = {character.SPECIAL_NAME}: {character.SPECIAL_DESCRIPTION}"]
         else:
             lines = [f"SPECIAL unavailable: {reason}."]
-        if isinstance(character, Archer):
+        # One last line (the panel has room for three): the most useful of these (M4.2-B).
+        if self.battle.why_not_allowed(self.selected_index(), "defend") is not None:
+            lines.append("DEFEND unavailable: your team defended last turn.")
+        elif character.guarded_strike_ready:
+            lines.append("ATTACK (or SPACE) uses Guarded Strike: +25% ATK.")
+        elif isinstance(character, Archer):
             lines.append("ATTACK, SPACE and Power Shot use this aim. Arrows aim.")
         else:
             lines.append("ATTACK (or SPACE) fires with this aim. Arrows aim.")
@@ -1163,6 +1186,8 @@ class Game:
                                      border_radius=4)
                     name_color = DEFEATED_COLOR
                 draw_plate(self.screen, self.label_plate_rect(side, index))   # M4.2-A: readable on any scenery
+                if character.is_alive() and (character.guarded_strike_pending or character.guarded_strike_ready):
+                    draw_guard_mark(self.screen, self.guard_mark_rect(side, index), character.guarded_strike_ready)
                 draw_text(self.screen, character.name, self.tiny_font, name_color,
                           center=(rect.centerx, label_y))
                 bar = pygame.Rect(rect.centerx - 20, label_y + 8, 40, 6)
@@ -1195,6 +1220,18 @@ class Game:
             draw_firing_figure(self.screen, role, x, top, run.facing(), TEAM_COLORS[side], side)
         else:
             draw_running_figure(self.screen, role, x, top, run.facing(), TEAM_COLORS[side], run.frame, side)
+
+    def guard_mark_rect(self, side, index):
+        """Where a character's Guarded Strike mark goes (M4.2-B): beside its name plate, on the
+        side toward the middle of the field."""
+        plate = self.label_plate_rect(side, index)
+        mark = pygame.Rect(0, 0, 13, 13)
+        mark.centery = plate.centery
+        if side == "left":
+            mark.left = plate.right + 2
+        else:
+            mark.right = plate.left - 2
+        return mark
 
     def label_plate_rect(self, side, index):
         """The light plate behind a character's name and HP bar (M4.2-A)."""

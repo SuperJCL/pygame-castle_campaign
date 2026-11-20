@@ -331,6 +331,10 @@ class AIController:
         use_specials = self.rng.random() < self.settings["special_chance"]
         if self.wants_to_defend(team):
             plan = self.defensive_plan(battle, use_specials)
+            if battle.why_not_allowed(plan.actor_index, plan.action) is not None:
+                # M4.2-B: Defend is refused right after the team's own Defend (anti-stall).
+                # The AI never plans that itself; a new controller mid-match might.
+                plan = self.attack_plan(battle, use_specials)
         else:
             plan = self.attack_plan(battle, use_specials)
         if battle.why_not_allowed(plan.actor_index, plan.action) is not None:

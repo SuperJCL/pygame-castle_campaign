@@ -13,6 +13,9 @@ EXP_PER_LEVEL = 30          # EXP needed for the next level = 30 x current level
 LEVEL_UP_HP = 10            # each level-up: +10 max HP and +10 HP
 LEVEL_UP_ATK = 3            #                +3 ATK
 LEVEL_UP_DEF = 1            #                +1 DEF
+# Guarded Strike (M4.2-B): a basic Defend makes the defender's normal Attack in its team's next
+# turn use ATK x 1.25 (then DEF, as usual). Battle decides when it is granted, ready and dropped.
+GUARDED_STRIKE_MULTIPLIER = 1.25
 
 
 def calculate_damage(attack, defense, defending, multiplier=1.0, ignores_def=False):
@@ -79,6 +82,9 @@ class Character:
         self._exp = 0
         self._is_defending = False
         self._special_cooldown = 0             # 0 means the special is ready
+        # Guarded Strike (M4.2-B): None, "pending" (it defended this turn) or "ready" (its
+        # team's turn after the Defend: this turn's Attack is stronger).
+        self._guarded_strike = None
 
     # ----- read-only properties ------------------------------------------------
 
@@ -138,8 +144,44 @@ class Character:
         return self.take_damage(damage)
 
     def attack_shot(self):
-        """The cannon shot this character fires with a normal Attack."""
+        """The cannon shot this character fires with a normal Attack: ATK x 1.25 while its
+        Guarded Strike is ready (M4.2-B). Block damage never changes."""
+        if self.guarded_strike_ready:
+            return ShotDamage(self.BLOCK_DAMAGE, GUARDED_STRIKE_MULTIPLIER)
         return ShotDamage(self.BLOCK_DAMAGE)
+
+    # ----- Guarded Strike (M4.2-B) -----------------------------------------------------
+
+    @property
+    def guarded_strike_pending(self):
+        """True from its Defend until its team's next turn starts."""
+        return self._guarded_strike == "pending"
+
+    @property
+    def guarded_strike_ready(self):
+        """True during its team's next turn after the Defend: its Attack is stronger."""
+        return self._guarded_strike == "ready"
+
+    def grant_guarded_strike(self):
+        """A basic Defend: the bonus waits for the team's next turn. Never more than one."""
+        self._guarded_strike = "pending"
+
+    def arm_guarded_strike(self):
+        """The team's next turn starts: a waiting bonus can be used now."""
+        if self._guarded_strike == "pending":
+            self._guarded_strike = "ready"
+
+    def use_guarded_strike(self):
+        """Its stronger Attack has been fired: the bonus is used up."""
+        self._guarded_strike = None
+
+    def expire_guarded_strike(self):
+        """The end of a turn: a ready bonus that wasn't used is dropped (returns True then).
+        One granted this turn waits for the next."""
+        if self._guarded_strike == "ready":
+            self._guarded_strike = None
+            return True
+        return False
 
     # ----- defending -----------------------------------------------------------
 

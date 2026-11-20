@@ -10,7 +10,7 @@ import unittest
 
 from battle import Team
 from castle import Castle
-from characters import Archer, Character, Engineer, Knight, calculate_damage
+from characters import GUARDED_STRIKE_MULTIPLIER, Archer, Character, Engineer, Knight, calculate_damage
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -307,6 +307,66 @@ class SpecialAvailabilityTest(unittest.TestCase):
         self.assertFalse(engineer.can_use_special(team))   # nothing to repair yet
         team.castle.blocks[0].take_damage(10)
         self.assertTrue(engineer.can_use_special(team))
+
+
+class GuardedStrikeStateTest(unittest.TestCase):
+    """M4.2-B: a character's Guarded Strike. battle.py decides when it is granted, armed,
+    used and dropped; the character only remembers it and makes its Attack stronger."""
+
+    def test_the_multiplier_is_one_and_a_quarter(self):
+        self.assertEqual(GUARDED_STRIKE_MULTIPLIER, 1.25)
+
+    def test_a_new_character_has_none_and_attacks_normally(self):
+        knight = Knight("K", "left")
+        self.assertFalse(knight.guarded_strike_pending or knight.guarded_strike_ready)
+        self.assertEqual(knight.attack_shot().multiplier, 1.0)
+
+    def test_granted_it_waits_then_armed_it_strengthens_the_attack(self):
+        knight = Knight("K", "left")
+        knight.grant_guarded_strike()                       # Defend this turn
+        self.assertTrue(knight.guarded_strike_pending)
+        self.assertEqual(knight.attack_shot().multiplier, 1.0)   # not during the Defend's own turn
+        knight.arm_guarded_strike()                         # the team's next turn starts
+        self.assertTrue(knight.guarded_strike_ready)
+        shot = knight.attack_shot()
+        self.assertEqual((shot.multiplier, shot.block_damage, shot.ignores_def), (1.25, 50, False))
+        knight.use_guarded_strike()
+        self.assertFalse(knight.guarded_strike_ready or knight.guarded_strike_pending)
+        self.assertEqual(knight.attack_shot().multiplier, 1.0)
+
+    def test_expiring_drops_only_a_ready_bonus_and_says_so(self):
+        knight = Knight("K", "left")
+        knight.grant_guarded_strike()
+        self.assertFalse(knight.expire_guarded_strike())    # granted this turn: kept for the next
+        self.assertTrue(knight.guarded_strike_pending)
+        knight.arm_guarded_strike()
+        self.assertTrue(knight.expire_guarded_strike())     # offered and not used: gone
+        self.assertFalse(knight.guarded_strike_ready)
+
+    def test_granting_again_never_stacks(self):
+        knight = Knight("K", "left")
+        for _ in range(3):
+            knight.grant_guarded_strike()
+            knight.arm_guarded_strike()
+        self.assertEqual(knight.attack_shot().multiplier, 1.25)   # one bonus, never x1.25 twice
+
+    def test_the_bonus_goes_through_the_normal_damage_formula(self):
+        # ATK x 1.25 rounded down, then DEF, minimum 1, halved against a defender.
+        self.assertEqual(calculate_damage(30, 12, False, GUARDED_STRIKE_MULTIPLIER), 25)   # Knight -> Knight
+        self.assertEqual(calculate_damage(40, 4, False, GUARDED_STRIKE_MULTIPLIER), 46)    # Archer -> Archer
+        self.assertEqual(calculate_damage(30, 12, True, GUARDED_STRIKE_MULTIPLIER), 12)    # defending: 25 // 2
+        archer, knight = Archer("A", "left"), Knight("K", "right")
+        archer.grant_guarded_strike()
+        archer.arm_guarded_strike()
+        shot = archer.attack_shot()
+        self.assertEqual(knight.take_hit(archer, shot.multiplier, shot.ignores_def), 38)  # int(50) - 12
+
+    def test_power_shot_is_not_changed_by_it(self):
+        archer = Archer("A", "left")
+        archer.grant_guarded_strike()
+        archer.arm_guarded_strike()
+        _, shot = archer.use_special(None)
+        self.assertEqual((shot.multiplier, shot.block_damage, shot.ignores_def), (1.5, 75, True))
 
 
 class PygameIndependenceTest(unittest.TestCase):

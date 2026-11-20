@@ -630,8 +630,11 @@ class MatchTest(unittest.TestCase):
 
     def test_an_ai_match_that_reaches_the_round_limit_is_a_draw_and_the_ai_stops(self):
         battle = combat([Knight], [Knight])
-        while battle.round_number < ROUND_LIMIT:                  # both sides defend until round 30
-            battle.perform_action(0, "defend")
+        while battle.round_number < ROUND_LIMIT:                  # both sides pass until round 30:
+            if battle.why_not_allowed(0, "defend") is None:       # Defend, or (M4.2-B: not two turns
+                battle.perform_action(0, "defend")                # in a row) a harmless shot
+            else:
+                pass_turn(battle)
         ais = {side: AIController(side, "hard", seed=4) for side in ("left", "right")}
         play(self, battle, ais, max_rounds=ROUND_LIMIT)           # one round: nobody can fall in it
         self.assertEqual((battle.winner, battle.end_reason), ("draw", "timeout"))
@@ -655,6 +658,52 @@ class MatchTest(unittest.TestCase):
         self.assertFalse(any(ai.wants_to_defend(team) for _ in range(30)))   # not twice in a row
         ai.new_match()
         self.assertTrue(any(ai.wants_to_defend(team) for _ in range(30)))
+
+
+class AntiStallAndGuardedStrikeAITest(unittest.TestCase):
+    """M4.2-B: the computer keeps the anti-stall rule and uses Guarded Strike like any attack."""
+
+    def test_ai_matches_never_try_a_refused_defend(self):
+        # play() fails on any "invalid" event; hurt teams make the computer defend often.
+        for difficulty in DIFFICULTY_SETTINGS:
+            with self.subTest(difficulty=difficulty):
+                battle = combat([Knight, Archer, Engineer], [Archer, Engineer, Knight])
+                for side in ("left", "right"):
+                    for character in battle.teams[side].characters:
+                        character.take_damage(character.max_hp // 2 + 5)      # everyone below half HP
+                ais = {side: AIController(side, difficulty, seed=11) for side in ("left", "right")}
+                battle.take_events()
+                defended = {"left": False, "right": False}
+                while not battle.is_over() and battle.round_number <= 12:
+                    side = battle.active_side
+                    plan = ais[side].take_turn(battle)
+                    self.assertIsNotNone(plan)
+                    self.assertFalse(plan.action == "defend" and defended[side], "two Defends in a row")
+                    defended[side] = plan.action == "defend"
+                    events = fly(battle)
+                    self.assertEqual([e for e in events if e["type"] == "invalid"], [])
+
+    def test_when_its_defend_would_be_refused_the_computer_attacks_instead(self):
+        battle = combat([Knight], [Archer, Engineer], first_side="right")
+        for character in battle.teams["right"].characters:
+            character.take_damage(character.max_hp // 2 + 5)          # hurt: it wants to defend
+        battle.perform_action(1, "defend")                          # RIGHT defended last turn ...
+        pass_turn(battle)                                           # ... LEFT passed: RIGHT again
+        self.assertIsNotNone(battle.why_not_allowed(0, "defend"))
+        for seed in range(12):                                      # a new controller doesn't remember
+            plan = AIController("right", "hard", seed=seed).choose(battle)
+            check_plan_is_legal(self, battle, plan)
+            self.assertNotEqual(plan.action, "defend")
+
+    def test_the_computer_values_a_ready_guarded_strike(self):
+        # Its search imagines shots with the real rules, so the bonus shows in what it expects.
+        battle = right_to_move([Knight], [Knight, Archer], layouts=OPEN)
+        knight = battle.teams["right"].characters[0]
+        knight.grant_guarded_strike()
+        knight.arm_guarded_strike()
+        trial, events = imagine(battle, 0, "attack", 45, 81)
+        hits = [h for e in events if e["type"] == "explosion" for h in e["characters_hit"]]
+        self.assertEqual([h["damage"] for h in hits], [25])          # x 1.25: 25, not 18
 
 
 if __name__ == "__main__":

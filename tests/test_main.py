@@ -71,6 +71,19 @@ def aim(game, angle, power):
     cannon.adjust_power(power - cannon.power)
 
 
+def pass_turn(game):
+    """The team to move passes without hurting anyone: DEFEND if it may, otherwise a harmless
+    shot (since M4.2-B a team can't Defend two turns in a row), waiting until it has landed."""
+    if game.battle.why_not_allowed(game.selected_index(), "defend") is None:
+        game.handle_click(game.action_buttons["defend"].rect.center)
+        game.update()
+    else:
+        aim(game, *HARMLESS)
+        game.handle_click(game.action_buttons["attack"].rect.center)
+        game.update()
+        finish_shot(game)
+
+
 @unittest.skipIf(pygame is None, "Pygame is not installed")
 class MainTestCase(unittest.TestCase):
     def setUp(self):
@@ -749,7 +762,7 @@ class AbilityPreflightTest(MainTestCase):
         archer = self.game.battle.teams["left"].characters[0]
         self.act("special", HARMLESS)                          # round 1: Power Shot, cooldown 3
         self.assertEqual((self.game.battle.active_side, archer.special_cooldown), ("right", 3))
-        self.act("defend")                                     # right; round 2 starts
+        pass_turn(self.game)                                   # right; round 2 starts
         for round_number, waiting in ((2, "ready in 2 rounds"), (3, "ready in 1 round")):
             self.assertEqual(self.game.battle.round_number, round_number)
             self.assertFalse(self.game.action_buttons["special"].enabled)
@@ -760,9 +773,9 @@ class AbilityPreflightTest(MainTestCase):
             self.assertIsNone(self.game.battle.projectile)
             self.assertEqual((archer.special_cooldown, self.game.battle.active_side,
                               self.game.battle.teams["right"].characters[0].hp), before)
-            self.act("defend")                                 # left
+            pass_turn(self.game)                               # left (DEFEND, or a harmless shot)
             self.assertEqual(archer.special_cooldown, 3 - (round_number - 1))   # no tick mid-round
-            self.act("defend")                                 # right; the next round starts
+            pass_turn(self.game)                               # right; the next round starts
         self.assertEqual((self.game.battle.round_number, archer.special_cooldown), (4, 0))
         self.assertTrue(self.game.action_buttons["special"].enabled)
         self.click(self.game.action_buttons["special"].rect)
@@ -833,11 +846,12 @@ def end_match_now(test):
 
 
 def defend_until_the_end(test):
-    """Both teams click DEFEND every turn until the match ends (two-player mode)."""
+    """Both teams pass every turn until the match ends (two-player mode): DEFEND, or a harmless
+    shot on a turn right after the team's own Defend (M4.2-B)."""
     for _ in range(2 * ROUND_LIMIT + 2):
         if test.game.state == "result":
             return
-        test.click(test.game.action_buttons["defend"].rect)
+        pass_turn(test.game)
     test.assertEqual(test.game.state, "result")
 
 
@@ -1126,11 +1140,12 @@ class PlayerVsAIBattleTest(MainTestCase):
         self.assertIn("computer", " ".join(self.game.action_hint_lines()))
 
     def test_a_whole_match_against_the_computer_ends_on_the_result_screen(self):
-        for _ in range(20000):                                    # the human only defends
+        for _ in range(20000):                                    # the human only passes
             if self.game.state == "result":
                 break
-            if self.game.battle.active_side == "left" and self.game.battle.can_fire():
-                self.click(self.game.action_buttons["defend"].rect)
+            if (self.game.battle.active_side == "left" and self.game.battle.can_fire()
+                    and not self.game.cannon_run.is_busy()):
+                pass_turn(self.game)
             else:
                 self.game.update()
         self.assertEqual(self.game.state, "result")
@@ -1412,10 +1427,10 @@ class CannonRunTest(MainTestCase):
         self.assertEqual(battle.active_side, "right")
 
     def reach_the_last_turn(self):
-        """Both teams defend until it is RIGHT's turn in round 30, the match's last turn."""
+        """Both teams pass until it is RIGHT's turn in round 30, the match's last turn."""
         battle = self.game.battle
         while not (battle.round_number == ROUND_LIMIT and battle.active_side == "right"):
-            self.click(self.game.action_buttons["defend"].rect)
+            pass_turn(self.game)
 
     def end_while_walking_back(self):
         """RIGHT's last turn is a quick harmless shot: the round limit ends the match while the
@@ -1608,14 +1623,18 @@ class SoundEventsTest(MainTestCase):
         self.assertEqual(played[-1], "defeat")
         self.assertEqual(played.count("defeat"), 1)
         self.game.handle_key(pygame.K_r, 0)
-        for _ in range(2 * ROUND_LIMIT * 200):                    # both sides only defend, to the limit
+        for _ in range(2 * ROUND_LIMIT * 200):                    # both sides only pass, to the limit
             if self.game.state == "result":
                 break
             if battle.active_side == "left":
-                self.click(self.game.action_buttons["defend"].rect)
-            else:
-                battle.perform_action(0, "defend")                # the computer's side, by hand
+                pass_turn(self.game)
+            elif battle.why_not_allowed(0, "defend") is None:     # the computer's side, by hand:
+                battle.perform_action(0, "defend")                # Defend, or a harmless shot
                 self.game.update()
+            else:
+                aim(self.game, *HARMLESS)
+                battle.perform_action(0, "attack")
+                finish_shot(self.game)
         self.assertEqual(battle.end_reason, "timeout")
         self.assertEqual(played[-1], "draw")
 
@@ -1980,6 +1999,81 @@ class AtmosphereTest(MainTestCase):
         self.assertIn("M: sound", self.game.log_header())
         self.game.handle_key(pygame.K_m, 0)
         self.assertIn("sound off", self.game.log_header().lower())
+
+
+class GuardedStrikeUITest(MainTestCase):
+    """M4.2-B: Guarded Strike and the anti-stall rule are visible: a mark on the defender, the
+    panel, the log, floating words, and DEFEND greyed out with its reason."""
+
+    def setUp(self):
+        super().setUp()
+        self.start([Knight, Archer], [Knight, Engineer])          # two players, default cover
+
+    def mark_pixel(self, side, index):
+        self.game.draw()
+        return tuple(self.screen.get_at(self.game.guard_mark_rect(side, index).center))[:3]
+
+    def right_passes(self):
+        aim(self.game, *HARMLESS)
+        self.click(self.game.action_buttons["attack"].rect)
+        finish_shot(self.game)
+
+    def test_the_defender_gets_a_hollow_mark_then_a_filled_one_on_its_next_turn(self):
+        self.assertNotEqual(self.mark_pixel("left", 0), main.GUARD_STRIKE_COLOR)
+        self.click(self.game.action_buttons["defend"].rect)       # LEFT Knight defends
+        self.assertIn("LEFT Knight: Guarded Strike next turn (+25% ATK).", self.game.log)
+        self.assertNotEqual(self.mark_pixel("left", 0), main.GUARD_STRIKE_COLOR)   # hollow: waiting
+        rect = self.game.guard_mark_rect("left", 0)
+        self.game.draw()
+        self.assertEqual(tuple(self.screen.get_at((rect.centerx, rect.top)))[:3], main.GUARD_STRIKE_COLOR)
+        self.right_passes()
+        self.assertEqual(self.mark_pixel("left", 0), main.GUARD_STRIKE_COLOR)      # filled: ready
+        status = " ".join(self.game.selected_info_lines())
+        self.assertIn("Guarded Strike ready", status)
+        self.assertIn("+25%", status)
+
+    def test_using_it_shows_the_bonus_and_the_bigger_hit(self):
+        self.click(self.game.action_buttons["defend"].rect)
+        self.right_passes()
+        aim(self.game, *FRONT_CHARACTER)
+        self.click(self.game.action_buttons["attack"].rect)
+        run_to_cannon(self.game)
+        self.assertIn("LEFT Knight uses Guarded Strike: ATK x1.25.", self.game.log)
+        self.assertIn("+25%", [text for _, _, text, _, _ in self.game.floaters])
+        finish_shot(self.game)
+        self.assertEqual(self.game.battle.teams["right"].characters[0].hp, 140 - 25)   # not 18
+        self.assertNotEqual(self.mark_pixel("left", 0), main.GUARD_STRIKE_COLOR)       # used up
+
+    def test_an_unused_one_expires_where_the_player_can_see_it(self):
+        self.click(self.game.action_buttons["defend"].rect)
+        self.right_passes()
+        self.click(self.character_rect("left", 1))                # the Archer acts instead
+        aim(self.game, *HARMLESS)
+        self.click(self.game.action_buttons["attack"].rect)
+        finish_shot(self.game)
+        self.assertIn("LEFT Knight's Guarded Strike expired unused.", self.game.log)
+        self.assertIn("expired", [text for _, _, text, _, _ in self.game.floaters])
+        self.assertNotEqual(self.mark_pixel("left", 0), main.GUARD_STRIKE_COLOR)
+
+    def test_defend_is_greyed_out_with_its_reason_the_turn_after_a_defend(self):
+        self.click(self.game.action_buttons["defend"].rect)
+        self.right_passes()
+        self.assertFalse(self.game.action_buttons["defend"].enabled)
+        self.assertTrue(self.game.action_buttons["attack"].enabled)
+        self.assertIn("DEFEND unavailable", " ".join(self.game.action_hint_lines()))
+        for index in range(2):                                    # the hints still fit the panel
+            self.game.select_actor(index)
+            hints = []
+            for line in self.game.action_hint_lines():
+                hints.extend(main.wrap_text(line, self.game.tiny_font, 390))
+            self.assertLessEqual(main.PANEL_TOP + 84 + 18 * len(hints), main.WINDOW_HEIGHT, hints)
+        self.game.select_actor(0)
+        self.click(self.game.action_buttons["defend"].rect)       # clicking it explains, does nothing
+        self.assertIn("two turns in a row", self.game.message)
+        self.assertEqual(self.game.battle.active_side, "left")
+        self.game.handle_key(pygame.K_r, 0)                       # a new match forgets it
+        self.click(self.game.action_buttons["defend"].rect)       # RIGHT moves first now
+        self.assertEqual(self.game.battle.active_side, "left")
 
 
 if __name__ == "__main__":

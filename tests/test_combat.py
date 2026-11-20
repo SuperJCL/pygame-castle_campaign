@@ -67,12 +67,17 @@ def pass_turn(battle):
 
 def defend_turns(battle, count):
     """`count` turns in a row, whoever is to move: the first living character Defends
-    (instant, no shot, no damage). Returns the events of the last turn."""
+    (instant, no shot, no damage). Since M4.2-B a team can't Defend two turns in a row, so on
+    the turn after its own Defend a team passes with a harmless shot instead. Returns the
+    events of the last turn."""
     events = []
     for _ in range(count):
         team = battle.teams[battle.active_side]
         index = next(i for i, c in enumerate(team.characters) if c.is_alive())
-        accepted, events = act(battle, index, "defend")
+        if battle.why_not_allowed(index, "defend") is None:
+            accepted, events = act(battle, index, "defend")
+        else:
+            accepted, events = act(battle, index, "attack", HARMLESS)
         assert accepted, events
     return events
 
@@ -768,6 +773,177 @@ class RoundLimitTest(unittest.TestCase):
         pass_turn(battle)                                         # left, round 30
         act(battle, 0, "attack", FRONT_CHARACTER)                 # right's last turn defeats the Archer
         self.assertEqual((battle.winner, battle.end_reason), ("right", "elimination"))
+
+
+def guard_events(events):
+    return [(e["type"], e["side"], e["name"]) for e in events if e["type"].startswith("guard_")]
+
+
+class GuardedStrikeTest(unittest.TestCase):
+    """M4.2-B: a basic Defend gives the defender ATK x 1.25 on a normal Attack during its team's
+    next turn only. Defend itself still halves damage (course rule C5)."""
+
+    def test_the_defender_attacks_25_percent_harder_on_its_team_next_turn(self):
+        battle = combat([Knight], [Knight], layouts=OPEN)
+        knight, enemy = battle.teams["left"].characters[0], battle.teams["right"].characters[0]
+        _, events = act(battle, 0, "defend")
+        self.assertTrue(knight.is_defending)                      # Defend still protects (C5)
+        self.assertTrue(knight.guarded_strike_pending)
+        self.assertEqual(guard_events(events), [("guard_granted", "left", "Knight")])
+        pass_turn(battle)                                         # right
+        self.assertTrue(knight.guarded_strike_ready)
+        _, events = act(battle, 0, "attack", FRONT_CHARACTER)
+        self.assertEqual(enemy.hp, 140 - 25)                      # int(30 x 1.25) - 12 = 25, not 18
+        self.assertEqual(guard_events(events), [("guard_used", "left", "Knight")])
+        self.assertEqual(knight.exp, 10)                          # EXP as for any hit
+        self.assertFalse(knight.guarded_strike_ready)
+        pass_turn(battle)
+        act(battle, 0, "attack", FRONT_CHARACTER)
+        self.assertEqual(enemy.hp, 140 - 25 - 18)                 # used up: a normal hit again
+
+    def test_it_expires_if_another_character_acts_in_that_turn(self):
+        battle = combat([Knight, Archer], [Knight], layouts=OPEN)
+        knight, enemy = battle.teams["left"].characters[0], battle.teams["right"].characters[0]
+        act(battle, 0, "defend")
+        pass_turn(battle)
+        _, events = act(battle, 1, "attack", FRONT_CHARACTER)     # the Archer attacks instead
+        self.assertEqual(enemy.hp, 140 - 28)                      # the Archer's normal 40 - 12
+        self.assertEqual(guard_events(events), [("guard_expired", "left", "Knight")])
+        self.assertFalse(knight.guarded_strike_ready or knight.guarded_strike_pending)
+        pass_turn(battle)
+        act(battle, 0, "attack", FRONT_CHARACTER)
+        self.assertEqual(enemy.hp, 140 - 28 - 18)                 # the Knight's bonus is gone
+
+    def test_power_shot_neither_uses_nor_adds_it(self):
+        battle = combat([Archer], [Knight], layouts=OPEN)
+        enemy = battle.teams["right"].characters[0]
+        act(battle, 0, "defend")
+        pass_turn(battle)
+        _, events = act(battle, 0, "special", FRONT_CHARACTER)    # Power Shot with a ready bonus
+        self.assertEqual(enemy.hp, 140 - 60)                      # 40 x 1.5, DEF ignored: not x 1.25 more
+        self.assertEqual(guard_events(events), [("guard_expired", "left", "Archer")])
+
+    def test_rally_gives_no_guarded_strike(self):
+        battle = combat([Knight, Archer], [Knight], layouts=OPEN)
+        _, events = act(battle, 0, "special")                     # Rally: everyone defends
+        self.assertTrue(all(c.is_defending for c in battle.teams["left"].characters))
+        self.assertFalse(any(c.guarded_strike_pending for c in battle.teams["left"].characters))
+        self.assertEqual(guard_events(events), [])
+
+    def test_it_never_stacks(self):
+        battle = combat([Knight], [Knight], layouts=OPEN, anti_stall=False)   # so Defend can repeat
+        enemy = battle.teams["right"].characters[0]
+        act(battle, 0, "defend")
+        pass_turn(battle)
+        act(battle, 0, "defend")                                  # again, while the first is ready
+        pass_turn(battle)
+        act(battle, 0, "attack", FRONT_CHARACTER)
+        self.assertEqual(enemy.hp, 140 - 25)                      # x 1.25 once, never x 1.25 x 1.25
+
+    def test_against_a_defender_the_bonus_hit_is_halved(self):
+        battle = combat([Knight], [Knight], layouts=OPEN)
+        enemy = battle.teams["right"].characters[0]
+        act(battle, 0, "defend")
+        act(battle, 0, "defend")                                  # right defends too
+        act(battle, 0, "attack", FRONT_CHARACTER)
+        self.assertEqual(enemy.hp, 140 - 12)                      # (37 - 12) // 2
+
+    def test_block_damage_is_unchanged(self):
+        battle = combat([Knight], [Knight])                       # default cover
+        act(battle, 0, "defend")
+        pass_turn(battle)
+        act(battle, 0, "attack", COVER_WALL)
+        self.assertEqual(battle.castles["right"].total_hp(), 600 - 200)   # 4 blocks x 50, as always
+
+    def test_it_can_be_switched_off(self):
+        battle = combat([Knight], [Knight], layouts=OPEN, guarded_strike=False)
+        enemy = battle.teams["right"].characters[0]
+        _, events = act(battle, 0, "defend")
+        self.assertFalse(battle.teams["left"].characters[0].guarded_strike_pending)
+        self.assertEqual(guard_events(events), [])
+        pass_turn(battle)
+        act(battle, 0, "attack", FRONT_CHARACTER)
+        self.assertEqual(enemy.hp, 140 - 18)
+
+    def test_a_defeated_defender_drops_it_quietly(self):
+        battle = combat([Knight, Archer], [Knight], layouts=OPEN)
+        act(battle, 1, "defend")                                  # the Archer
+        battle.teams["left"].characters[1].take_damage(500)       # falls before its next turn
+        pass_turn(battle)
+        _, events = act(battle, 0, "attack", FRONT_CHARACTER)
+        self.assertEqual(guard_events(events), [])
+        self.assertEqual(battle.teams["right"].characters[0].hp, 140 - 18)
+
+    def test_a_new_match_clears_it(self):
+        battle = combat([Knight], [Knight], layouts=OPEN)
+        act(battle, 0, "defend")
+        battle.reset()
+        self.assertFalse(battle.teams["left"].characters[0].guarded_strike_pending)
+
+    def test_a_guarded_strike_can_win_on_the_last_turn_of_round_30(self):
+        battle = combat([Archer], [Archer], layouts=OPEN)
+        battle.teams["left"].characters[0].take_damage(50)        # 40 HP: a normal hit (36) won't do
+        for _ in range(2 * (ROUND_LIMIT - 2) + 1):                # to round 29, right to move
+            pass_turn(battle)
+        act(battle, 0, "defend")                                  # right, round 29
+        pass_turn(battle)                                         # left, round 30
+        self.assertEqual(battle.round_number, ROUND_LIMIT)
+        act(battle, 0, "attack", FRONT_CHARACTER)                 # right's last turn: 46 damage
+        self.assertEqual((battle.winner, battle.end_reason), ("right", "elimination"))
+
+
+class AntiStallTest(unittest.TestCase):
+    """M4.2-B: a team can't Defend two turns in a row (on unless switched off). The computer
+    has always played so; Rally is a special and doesn't count."""
+
+    def test_after_a_defend_the_team_cannot_defend_on_its_next_turn(self):
+        battle = combat([Knight, Archer], [Knight])
+        act(battle, 0, "defend")
+        pass_turn(battle)
+        reason = battle.why_not_allowed(1, "defend")              # any character of the team
+        self.assertIn("two turns in a row", reason)
+        before = snapshot(battle)
+        accepted, events = act(battle, 1, "defend")
+        self.assertFalse(accepted)
+        self.assertEqual(events_of(events, "invalid"), [{"type": "invalid", "reason": reason}])
+        self.assertEqual(snapshot(battle), before)
+        self.assertIsNone(battle.why_not_allowed(0, "attack"))
+        pass_turn(battle)                                         # left attacks this turn
+        pass_turn(battle)                                         # right
+        self.assertIsNone(battle.why_not_allowed(0, "defend"))    # allowed again
+
+    def test_each_team_is_counted_on_its_own(self):
+        for first in ("left", "right"):
+            with self.subTest(first=first):
+                battle = combat([Knight], [Knight], first_side=first)
+                act(battle, 0, "defend")                          # the first mover defends ...
+                self.assertIsNone(battle.why_not_allowed(0, "defend"))   # ... the other team still may
+                act(battle, 0, "defend")
+                self.assertIsNotNone(battle.why_not_allowed(0, "defend"))
+
+    def test_rally_is_not_blocked_and_does_not_count(self):
+        battle = combat([Knight, Archer], [Knight])
+        act(battle, 0, "defend")
+        pass_turn(battle)
+        accepted, _ = act(battle, 0, "special")                   # Rally right after a Defend: allowed
+        self.assertTrue(accepted)
+        pass_turn(battle)
+        self.assertIsNone(battle.why_not_allowed(0, "defend"))    # and a Defend right after Rally too
+
+    def test_it_can_be_switched_off(self):
+        battle = combat([Knight], [Knight], anti_stall=False)
+        for _ in range(6):
+            accepted, _ = act(battle, 0, "defend")
+            self.assertTrue(accepted)
+
+    def test_it_is_on_by_default_and_a_new_match_forgets_the_last_defend(self):
+        import battle as battle_module
+        self.assertTrue(battle_module.ANTI_STALL and battle_module.GUARDED_STRIKE)
+        battle = combat([Knight], [Knight])
+        self.assertTrue(battle.anti_stall and battle.guarded_strike)
+        act(battle, 0, "defend")
+        battle.reset(first_side="left")
+        self.assertIsNone(battle.why_not_allowed(0, "defend"))
 
 
 if __name__ == "__main__":

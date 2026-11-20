@@ -1,17 +1,17 @@
 # Castle Siege — M0 Requirements and Architecture
 
-Status: **Revision 3 (M2.3), updated for M4.2-A.** This is the living design document. The game
-is implemented up to M4.2-A (Player vs AI, two-player hot seat, the M3.2 balance numbers, the
+Status: **Revision 3 (M2.3), updated for M4.2-B.** This is the living design document. The game
+is implemented up to M4.2-B (Player vs AI, two-player hot seat, the M3.2 balance numbers, the
 M3.3 match flow, the M3.4-A redesign: elimination-only victory and deployable cover, M3.4-B: the
 cover placement screen and a cover-aware computer opponent, M3.4-B.1: Easy's aiming error
 lowered so that its matches finish, M3.4-C: the character-to-cannon animation, M4.1: interface
-and visual polish, cosmetic only, and M4.2-A: sound, atmosphere and readability, presentation
-only; a Defend redesign, M4.2-B, is proposed in `docs/M4.2-B_defend_design_review.md` and not
-built). Revision 3's
+and visual polish, cosmetic only, M4.2-A: sound, atmosphere and readability, presentation only,
+and M4.2-B: Guarded Strike and the anti-stall rule for Defend, a gameplay change approved after
+`docs/M4.2-B_defend_design_review.md`). Revision 3's
 final decisions and the M3.2 / M3.3 / M3.4 changes, just below, override anything older in this
 document; **where they disagree, the later M3.4 block wins (M3.4-C, then M3.4-B, then M3.4-A).**
 The AI that was built differs from the plan in §6.3; see §14, "M3.1 notes" and "M3.4-B notes".
-The course-compliance checklist is `docs/M3.3_course_compliance.md` (updated for M4.2-A).
+The course-compliance checklist is `docs/M3.3_course_compliance.md` (updated for M4.2-B).
 
 ### Revision 3 — final decisions (made by the PM and the user in M2.3)
 - **Alternating turns are the final design. Simultaneous turns are cancelled.** The left team
@@ -194,7 +194,31 @@ screen and the AI redesign are M3.4-B, the run-to-cannon animation M3.4-C.
 - **Readability:** team emblems (LEFT circle, RIGHT diamond) on chests, flags, HUD badges and the
   turn banner; light plates behind names and HP bars and behind the cover screen's text; a bold
   turn banner with smaller team lines; floating words placed so they never overlap.
-- Details are in §14, "M4.2-A notes". Human acceptance is pending.
+- Details are in §14, "M4.2-A notes". Human acceptance: 6 of 8 items passed; the other two (M
+  mute and R stopping sounds mid-flight) were not verified by the tester (not failures).
+
+### M4.2-B — Defend: Guarded Strike and the anti-stall rule (a gameplay change)
+- **Approved** after the design review (`docs/M4.2-B_defend_design_review.md`, option 1).
+- **Defend is unchanged:** half damage after DEF, minimum 1, until the team's next turn; Cover
+  Guard unchanged (course rule C5).
+- **Guarded Strike** (`battle.GUARDED_STRIKE`, on): a basic Defend gives the defender ATK × 1.25
+  (`characters.GUARDED_STRIKE_MULTIPLIER`) on a normal Attack in its team's next turn only.
+  - It is used up by that Attack; it expires at the end of that turn if unused (another character
+    acted, or the defender used its special); it never stacks.
+  - Power Shot neither uses nor adds it; Rally gives none; block damage and EXP are unchanged.
+  - States on the character: pending (granted by the Defend) → ready (armed at its team's next
+    turn start) → used or expired (at that turn's end). Events: `guard_granted`, `guard_used`,
+    `guard_expired`.
+- **Anti-stall** (`battle.ANTI_STALL`, on): a team can't Defend two turns in a row; Rally
+  doesn't count. `Battle(guarded_strike=..., anti_stall=...)` switches either off (the balance
+  comparison does).
+- **AI:** its Defend rates are unchanged (course rule C4) and it already never defended twice in a
+  row. Its search imagines shots with the real rules, so it values a ready Guarded Strike by
+  itself. One safety change: if its planned Defend would be refused, it attacks instead.
+- **Interface:** a hollow gold star (pending) or a filled one (ready) beside the defender's name
+  plate; panel and log lines; "+25%" and "expired" floating words; DEFEND greyed out, with the
+  reason in the panel and in the HUD when it is clicked.
+- Details are in §14, "M4.2-B notes". Human acceptance is pending.
 
 Revision 2's original header: *draft for project-manager review; M0 design only.*
 
@@ -1072,8 +1096,8 @@ open (see M3). The original plan follows.
 
 **M4 status:** M4.1 (interface and visual polish, cosmetic only) done and approved; it covers this
 section's crack lines and visible event feedback. M4.2-A (sound, atmosphere, readability;
-presentation only) done, awaiting PM review; it covers the sounds and the silent fallback. M4.2-B
-(Defend redesign) is a design review only, waiting for approval.
+presentation only) done, accepted with two items unverified; it covers the sounds and the silent
+fallback. M4.2-B (Defend: Guarded Strike and the anti-stall rule) done, awaiting PM review.
 
 **Updated in M2.3.**
 - **Required:** Player vs AI.
@@ -2148,3 +2172,49 @@ measures the contrast against the plate actually drawn behind each name. No comb
 - Team identity still also relies on colour in places (the HP-bar colours, the cover).
 - The default font has no real bold; the banner uses a synthetic bold.
 - Human acceptance (hearing the sounds, the look) is pending.
+
+### M4.2-B notes (Guarded Strike and the anti-stall rule)
+**What was built:** option 1 of the approved design review. `characters.py` holds the state and
+the stronger Attack; `battle.py` grants, arms, uses and drops it, applies the anti-stall rule and
+reports events; `ai.py` attacks instead of a refused Defend; `main.py` shows it.
+
+**Tests changed because of the new rule.** Several existing tests passed turns by having both
+teams Defend every turn (the round-limit tests, the result-screen and sound timeout tests, the
+cooldown preflight, a whole match against the computer, the AI round-limit test). Under the
+anti-stall rule every second such Defend is refused, which would have made two of them loop
+forever. They now pass with "Defend if allowed, otherwise a harmless shot" (`defend_turns` in
+`test_combat.py`, `pass_turn` in `test_main.py`, and the loop in `test_ai.py`); what they check
+is unchanged. No combat-rule assertion was weakened.
+
+**Balance with the real code** (seeded, 3v3, Normal v Normal, each AI with its own team and cover;
+20 seeds × both first movers = 40 matches per cell; RIGHT plays the normal Normal AI; "turtle"
+defends with its weakest character every turn it is allowed to, otherwise the AI attacks). LEFT
+wins / draws:
+
+| LEFT policy | Baseline (both off) | Guarded Strike only | Guarded Strike + anti-stall (the game) |
+|---|---|---|---|
+| never Defend | 62 % / 0 | 60 % / 0 | 60 % / 0 |
+| the Normal AI's rate | 32 % / 5 % | 35 % / 5 % | 35 % / 5 % |
+| heavy (30 % / 90 %) | 18 % / 20 % | 32 % / 5 % | 32 % / 5 % |
+| turtle | 0 % / 0 | 0 % / 0 | 22 % / 10 % |
+
+- Defending heavily costs much less than before (18 % → 32 % wins, draws 20 % → 5 %), but never
+  defending still wins most, so Defend is a situational choice, not a dominant one.
+- The anti-stall rule changes nothing between two computers (they never Defend twice in a row);
+  it binds a turtling player, who must then strike every other turn (with Guarded Strike) and
+  wins 22 % instead of 0 %.
+- No action was refused in the 480 matches (the computer never breaks the rule).
+- The baseline cell reproduces the pre-M4.2-B results exactly, so switching both rules off
+  restores the old game.
+- The exact 1v1 duel model in the design review gives the same picture: Defend's option value
+  rises from +0.0002 to +0.025 win chance, with no extra draws.
+
+**Mutation check:** 14 defects were injected one at a time (the bonus never applied, applied to
+Power Shot, never used up, never expiring, working in the Defend's own turn, granted by Rally;
+the rule off by default, counting Rally, not reset by an Attack, kept across a rematch; the AI
+trying a refused Defend; the waiting and ready marks alike; no "expired" word; no reason on a
+click on the greyed DEFEND). All 14 were caught.
+
+**Remaining limits:** the computer's Defend policy is simple (the weakest character, at random),
+so the balance numbers describe this AI, not a skilled player; whether × 1.25 and the rule feel
+right needs human play-testing.

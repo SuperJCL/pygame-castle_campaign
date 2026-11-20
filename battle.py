@@ -14,6 +14,10 @@ enemy character. The LEFT side moves first unless the Battle is told otherwise
 (first_side). A match that reaches the end of ROUND_LIMIT complete rounds without
 an elimination is a draw.
 
+M4.2-B adds two rules about Defend (each can be switched off): Guarded Strike (a basic Defend
+makes the defender's normal Attack in its team's next turn use ATK x 1.25) and the anti-stall
+rule (a team can't Defend two turns in a row). Defend itself still halves damage.
+
 Like castle.py and characters.py, this module uses only the standard library,
 so the rules can be tested without opening a window. main.py draws the battle
 and reads its events.
@@ -58,6 +62,10 @@ CASTLE_GUARD_PERCENT = 50
 # Round limit (our safety rule, not a course requirement): a match that reaches the end of
 # this many COMPLETE rounds (both teams have acted) without an elimination is a draw.
 ROUND_LIMIT = 30
+# M4.2-B (approved after the design review in docs/M4.2-B_defend_design_review.md). Both are on
+# in the game; a Battle can switch either off (the balance comparison does).
+GUARDED_STRIKE = True         # a basic Defend gives Guarded Strike (characters.GUARDED_STRIKE_MULTIPLIER)
+ANTI_STALL = True             # a team can't Defend two turns in a row (Rally doesn't count)
 
 
 def clamp(value, low, high):
@@ -215,7 +223,7 @@ class Battle:
     an event list. main.py collects them once per frame with take_events().
     """
 
-    def __init__(self, roster, layouts=None, first_side="left"):
+    def __init__(self, roster, layouts=None, first_side="left", guarded_strike=None, anti_stall=None):
         """roster: {"left": [...], "right": [...]} with 1-3 character classes per side,
         e.g. {"left": [Knight, Archer], "right": [Engineer]}.
 
@@ -223,7 +231,12 @@ class Battle:
         blocks on (see castle.layout_problem). None gives both teams DEFAULT_LAYOUT.
 
         first_side: "left" or "right", the side that moves first in every round.
+
+        guarded_strike, anti_stall: switch the M4.2-B rules on or off for this battle (None
+        uses GUARDED_STRIKE / ANTI_STALL).
         """
+        self.guarded_strike = GUARDED_STRIKE if guarded_strike is None else guarded_strike
+        self.anti_stall = ANTI_STALL if anti_stall is None else anti_stall
         if layouts is None:
             layouts = {"left": DEFAULT_LAYOUT, "right": DEFAULT_LAYOUT}
         self._roster = roster
@@ -257,6 +270,7 @@ class Battle:
         # Why the match ended: "elimination", "both_lost" or "timeout" (the round limit);
         # None while playing.
         self.end_reason = None
+        self._defended_last_turn = {"left": False, "right": False}   # for the anti-stall rule
         self._events = []
 
     def is_over(self):
@@ -286,10 +300,18 @@ class Battle:
         actor = team.characters[actor_index]
         self._events.append({"type": "action", "side": self.active_side,
                              "name": actor.name, "action": action})
+        self._defended_last_turn[self.active_side] = action == "defend"
         if action == "attack":
-            self._launch(actor, actor.attack_shot())
+            shot = actor.attack_shot()                 # ATK x 1.25 if its Guarded Strike is ready
+            if actor.guarded_strike_ready:
+                actor.use_guarded_strike()
+                self._events.append({"type": "guard_used", "side": self.active_side, "name": actor.name})
+            self._launch(actor, shot)
         elif action == "defend":
             actor.defend()
+            if self.guarded_strike:                    # M4.2-B: a stronger Attack next turn
+                actor.grant_guarded_strike()
+                self._events.append({"type": "guard_granted", "side": self.active_side, "name": actor.name})
             self._finish_turn(actor, 0)
         else:
             # Each role's use_special() does something different (polymorphism):
@@ -325,6 +347,8 @@ class Battle:
             return f"{actor.name} has been defeated and can't act"
         if action not in ACTIONS:
             return f"unknown action {action!r}"
+        if action == "defend" and self.anti_stall and self._defended_last_turn[self.active_side]:
+            return "your team defended last turn: DEFEND can't be used two turns in a row"
         if action == "special":
             return actor.special_blocked_reason(team)   # None if the special is available
         return None
@@ -508,6 +532,10 @@ class Battle:
             levels = actor.gain_exp(exp)
             self._events.append({"type": "exp", "side": actor.side, "name": actor.name,
                                  "amount": exp, "levels": levels})
+        # The turn is over: a Guarded Strike offered in it and not used is dropped (M4.2-B).
+        for character in self.teams[self.active_side].characters:
+            if character.expire_guarded_strike() and character.is_alive():
+                self._events.append({"type": "guard_expired", "side": self.active_side, "name": character.name})
 
         # An elimination always comes first, even on the last turn of the last round.
         if self.check_winner() is not None:
@@ -537,9 +565,11 @@ class Battle:
         self._events.append({"type": "round", "number": self.round_number})
 
     def _start_turn(self, side):
-        """The start of a team's turn: its Defend (and Rally) from last turn ends now.
+        """The start of a team's turn: its Defend (and Rally) from last turn ends now, and
+        a Guarded Strike from that Defend becomes ready for this turn.
 
         So a Defend protects against exactly one enemy action: the turn in between.
         """
         for character in self.teams[side].characters:
             character.clear_defend()
+            character.arm_guarded_strike()     # a Guarded Strike from last turn's Defend: usable now

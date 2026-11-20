@@ -66,6 +66,8 @@ GRASS_EDGE = (128, 176, 92)           # the lighter top line of the ground
 EMBLEM_COLOR = (255, 255, 255)
 EMBLEM_Y = 19                          # the emblem's centre, from the top of a figure's 28 x 44 box
 PLATE_COLOR = (255, 255, 255, 150)    # the see-through plate behind each name and HP bar
+GUARD_STRIKE_COLOR = (235, 170, 20)   # M4.2-B: the Guarded Strike mark and its "+25%"
+EXPIRED_COLOR = (105, 112, 124)       # the "expired" word when an unused Guarded Strike is lost
 
 
 def block_color(side, hp, max_hp):
@@ -157,6 +159,15 @@ def draw_emblem(screen, side, center, size):
     else:
         reach = size + 1                   # a diamond looks smaller than a circle of the same size
         pygame.draw.polygon(screen, EMBLEM_COLOR, [(x, y - reach), (x + reach, y), (x, y + reach), (x - reach, y)])
+
+
+def draw_guard_mark(screen, rect, ready):
+    """The Guarded Strike mark (M4.2-B): a four-pointed star, hollow while it waits for the
+    team's next turn, filled when this turn's Attack is stronger."""
+    x, y = rect.center
+    left, top, right, bottom = rect.left, rect.top, rect.right - 1, rect.bottom - 1
+    points = [(x, top), (x + 2, y - 2), (right, y), (x + 2, y + 2), (x, bottom), (x - 2, y + 2), (left, y), (x - 2, y - 2)]
+    pygame.draw.polygon(screen, GUARD_STRIKE_COLOR, points, 0 if ready else 1)
 
 
 def draw_badge(screen, side, center, radius):

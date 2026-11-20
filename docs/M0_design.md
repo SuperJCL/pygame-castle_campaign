@@ -1,15 +1,17 @@
 # Castle Siege — M0 Requirements and Architecture
 
-Status: **Revision 3 (M2.3), updated for M4.1.** This is the living design document. The game
-is implemented up to M4.1 (Player vs AI, two-player hot seat, the M3.2 balance numbers, the
+Status: **Revision 3 (M2.3), updated for M4.2-A.** This is the living design document. The game
+is implemented up to M4.2-A (Player vs AI, two-player hot seat, the M3.2 balance numbers, the
 M3.3 match flow, the M3.4-A redesign: elimination-only victory and deployable cover, M3.4-B: the
 cover placement screen and a cover-aware computer opponent, M3.4-B.1: Easy's aiming error
-lowered so that its matches finish, M3.4-C: the character-to-cannon animation, and M4.1: interface
-and visual polish, cosmetic only). Revision 3's
+lowered so that its matches finish, M3.4-C: the character-to-cannon animation, M4.1: interface
+and visual polish, cosmetic only, and M4.2-A: sound, atmosphere and readability, presentation
+only; a Defend redesign, M4.2-B, is proposed in `docs/M4.2-B_defend_design_review.md` and not
+built). Revision 3's
 final decisions and the M3.2 / M3.3 / M3.4 changes, just below, override anything older in this
 document; **where they disagree, the later M3.4 block wins (M3.4-C, then M3.4-B, then M3.4-A).**
 The AI that was built differs from the plan in §6.3; see §14, "M3.1 notes" and "M3.4-B notes".
-The course-compliance checklist is `docs/M3.3_course_compliance.md` (updated for M4.1).
+The course-compliance checklist is `docs/M3.3_course_compliance.md` (updated for M4.2-A).
 
 ### Revision 3 — final decisions (made by the PM and the user in M2.3)
 - **Alternating turns are the final design. Simultaneous turns are cancelled.** The left team
@@ -175,7 +177,24 @@ screen and the AI redesign are M3.4-B, the run-to-cannon animation M3.4-C.
 - **Screens:** "THE COMPUTER PICKS" on the computer's cards, budget squares, a frame around the
   cover slots and an "×" on slots that can't take a block, button hover, darker labels on the sky
   (contrast at least 4.5 : 1), win and draw result banners, "Final round: N / 30".
-- Details (the audit, before/after, tests) are in §14, "M4.1 notes". Human acceptance is pending.
+- Details (the audit, before/after, tests) are in §14, "M4.1 notes". Human acceptance passed (8/8).
+
+### M4.2-A — sound, atmosphere and readability (presentation only)
+- **No gameplay change:** `battle.py`, `castle.py`, `characters.py`, `ai.py` and `animation.py`
+  are unchanged; hit boxes, trajectories, cover geometry, damage and AI are as in M4.1.
+- **Sound** (`sound.py`): eight effects made in code with the standard library (no files, nothing
+  to license): fire, explosion, cover hit, cover destroyed, level-up, victory, defeat, draw.
+  `Game.play_event_sound` plays one per Battle event as `update()` reads it (so each plays once);
+  a destroyed block is detected by counting standing blocks. `SoundBoard` is silent when the mixer
+  can't start (no audio device, an unsupported format); a rematch, new teams and quitting stop all
+  sounds; M mutes on every screen. Mixer buffer 512 samples at 22 050 Hz (about 23 ms).
+- **Atmosphere:** `drawing.make_background` draws, once per game, a sky gradient, clouds, pale far
+  hills with two distant castles, near hills, the ground (its top still at `GROUND_Y`) and each
+  team's flag; the battlefield and the cover screen blit it every frame.
+- **Readability:** team emblems (LEFT circle, RIGHT diamond) on chests, flags, HUD badges and the
+  turn banner; light plates behind names and HP bars and behind the cover screen's text; a bold
+  turn banner with smaller team lines; floating words placed so they never overlap.
+- Details are in §14, "M4.2-A notes". Human acceptance is pending.
 
 Revision 2's original header: *draft for project-manager review; M0 design only.*
 
@@ -1051,8 +1070,10 @@ open (see M3). The original plan follows.
   notes").
 - **Next:** M4, only after PM approval.
 
-**M4 status:** M4.1 (interface and visual polish, cosmetic only) done, awaiting PM review; it
-covers this section's crack lines and visible event feedback. Sound is M4.2, after PM approval.
+**M4 status:** M4.1 (interface and visual polish, cosmetic only) done and approved; it covers this
+section's crack lines and visible event feedback. M4.2-A (sound, atmosphere, readability;
+presentation only) done, awaiting PM review; it covers the sounds and the silent fallback. M4.2-B
+(Defend redesign) is a design review only, waiting for approval.
 
 **Updated in M2.3.**
 - **Required:** Player vs AI.
@@ -2097,3 +2118,33 @@ special ready and recharging.
 - Red/green HP colours are backed up by the bar's length, but team identity is still mostly colour.
 - The default Pygame font has no bold, so the hierarchy relies on size and colour.
 - Human acceptance is pending.
+
+### M4.2-A notes (sound, atmosphere and readability)
+**Audit before any change.** Baseline `b470cfb` (M4.1, approved), 348 tests passing with Pygame;
+no audio code existed (the tests already used SDL's dummy audio driver). The course does not
+require sound; this document's M4 plan asked for generated or CC0 sounds, a silent fallback and
+M to mute. Gameplay restrictions: presentation only (the brief), and nothing in `battle.py`,
+`castle.py`, `characters.py`, `ai.py` or `animation.py` may change for M4.2-A.
+
+**Sound design.** Bangs are random noise through a one-pole low-pass filter with an exponential
+fade, over a falling low sine (the thump); tunes are short sine melodies with a few overtones.
+Each effect is scaled to the same peak and ends with a 10 ms fade (no click). The noise has a
+fixed seed per effect, so the sounds are the same on every run; they are made once per run
+(about 0.16 s, cached).
+
+**Event mapping** (`Game.play_event_sound`): "fire" → fire (on the launch frame, after the run to
+the cannon); "explosion" → explosion, plus cover destroyed if the target team has fewer standing
+blocks than before, otherwise cover hit if a block was in the blast; "exp" with a level gained →
+level-up; "game_over" → every sound stops, then victory, defeat (the computer won) or draw.
+Defend, Rally, Repair, a miss off the field and refused actions are silent.
+
+**Tests changed for the new look.** Eight pixel assertions in four existing tests compared a
+pixel with the flat `SKY_COLOR` ("nothing is drawn here"). With a background picture that means "the background's
+pixel here", so they now compare with `Game.background`. The readability check of names now
+measures the contrast against the plate actually drawn behind each name. No combat test changed.
+
+**Remaining limits:**
+- The sounds are simple synthesized effects, not recorded ones.
+- Team identity still also relies on colour in places (the HP-bar colours, the cover).
+- The default font has no real bold; the banner uses a synthetic bold.
+- Human acceptance (hearing the sounds, the look) is pending.

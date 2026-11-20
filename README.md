@@ -6,7 +6,7 @@ stands behind its own cover blocks and shares one cannon standing in front of th
 teams take turns: pick a character, aim the cannon, and Attack, Defend or use a Special ability.
 **You win by defeating every enemy character.**
 
-**Current status: Milestone 4.1 — interface and visual polish.**
+**Current status: Milestone 4.2-A — sound, atmosphere and readability.**
 - Only elimination wins. Castle destruction is not a victory condition.
 - Before each battle, every team places its own cover: up to 6 blocks on 8 fixed slots. Against
   the computer you place the LEFT cover and the computer places its own.
@@ -19,6 +19,10 @@ teams take turns: pick a character, aim the cannon, and Attack, Defend or use a 
 - M4.1: clearer screens (see *What the screen shows* below): a turn banner that says what is
   happening, floating damage numbers, see-through explosions, cracked and destroyed cover,
   distinct win and draw screens. **Cosmetic only: no game rule, AI choice or number changed.**
+- M4.2-A: sound effects made in code (M turns them off), a battlefield with a sky, hills and a
+  flag for each team, team emblems (LEFT circle, RIGHT diamond) so the teams differ by shape
+  as well as colour, and name plates. **Presentation only: no rule changed.** A redesign of
+  Defend (M4.2-B) is only proposed so far, waiting for approval.
 
 You play the LEFT team against a computer opponent (Easy, Normal or Hard), or two people play
 each other on one computer. The design and roadmap are in [docs/M0_design.md](docs/M0_design.md).
@@ -129,6 +133,7 @@ In VS Code you can also pick the `.venv` interpreter (**Python: Select Interpret
 | Enter | PLACE COVER (selection screen), Confirm (cover screen) |
 | Backspace | Back (cover screen) |
 | R | Rematch: restart with the same teams and cover (the side that moves first swaps) |
+| M | Sound on / off (any screen) |
 | Esc | Quit |
 
 Holding an arrow key keeps changing the value. SPACE acts once per press. While a character
@@ -229,6 +234,23 @@ what is drawn and what the text says.
 - **Result screen:** a coloured title band (the winner's colour, or amber for a draw) with
   "Victory by elimination" or "Time limit reached", and "Final round: N / 30".
 
+## Sound and atmosphere (M4.2-A, presentation only)
+- **Sound effects**, made in code by `sound.py` (no sound files, so nothing to license): the
+  cannon firing, the explosion, a block hit, a block destroyed, a level-up, and a tune for a
+  victory, a defeat (against the computer) or a draw. Each plays once, when the game reads the
+  matching Battle event; Defend, Rally, Repair and refused actions are silent. A rematch, new
+  teams or quitting stop every sound.
+- **M** turns the sound off and on, on every screen; the combat log heading shows which.
+- **No audio device?** The game is silent and works exactly the same (the mixer is optional).
+- **The battlefield** has a sky that lightens toward the horizon, a few clouds, pale far hills
+  with two distant castles, green near hills and each team's flag. It is drawn once, as a
+  picture: nothing in it stops a shot, and no hit box, trajectory or rule changed.
+- **Teams by shape:** LEFT's emblem is a circle and RIGHT's a diamond, on every character's chest,
+  on the flags, in the HUD and in the turn banner, so the colours are not the only clue.
+- **Readability:** names and HP bars sit on light plates; the turn banner is bold and the team
+  lines smaller; floating damage words never overlap (a new one moves up); the cover screen's
+  text has a plate too.
+
 ## The run to the cannon (M3.4-C)
 - **One shared cannon per team.** Every character of a team attacks through the same cannon,
   which stands in front of the team's cover. The shot always starts at the cannon, and its
@@ -301,25 +323,28 @@ python -m unittest discover tests
 - The tests for the game logic (`castle.py`, `battle.py`, `characters.py`), the computer
   opponent (`ai.py`) and the run's timing and positions (`animation.py`) don't need Pygame. The
   AI tests use fixed random seeds, so every run gives the same results.
-- The tests in `tests/test_main.py` (screens, buttons, keyboard and mouse handling, window setup)
-  need Pygame. They are skipped if it isn't installed, and they never open a visible window.
+- The tests in `tests/test_main.py` (screens, buttons, keyboard and mouse handling, window setup,
+  which sounds play) and `tests/test_sound.py` (the sound effects and the silent fallback) need
+  Pygame. They are skipped if it isn't installed; they never open a visible window or make a sound.
 
 ## Project layout
 | File | Purpose |
 |---|---|
 | `main.py` | Pygame window, screens (team selection, cover placement, battle, result), buttons, mouse and keyboard input, the computer's turn, when an attack is fired (after the run), drawing and the main loop |
 | `drawing.py` | The screens' shared look: colours, text, character figures (standing, running, firing), cover blocks (cracks, destroyed outline), HP-bar colours and buttons (moved out of `main.py` in M3.4-B; with `main.py`, the only files that use Pygame) |
+| `sound.py` | Sound effects made in code and `SoundBoard` (M4.2-A): plays them, stops them, mutes; silent without an audio device |
 | `animation.py` | `CannonRun` (M3.4-C): the states and frames of a character's run to the cannon and back, and where to draw it; no Pygame, never changes the Battle |
 | `ai.py` | `AIController`: the computer opponent (team and cover choice, Defend / Attack / Special choice, cover-aware aiming) and its difficulty table |
 | `battle.py` | Cannons, projectile physics, collision along the flight path, explosions and cover, turns, the round limit and victory; `Team` and team combat (Attack / Defend / Special); `path_contacts` for the computer's planning |
 | `castle.py` | `Block`, the 8 cover slots, the layout rules (`layout_problem`) and the placement clicks (`place_block`, `remove_block`), and `Castle` (one team's cover): damage and repair |
 | `characters.py` | `Character` base class with `Knight`, `Archer`, `Engineer`: HP/ATK/DEF, damage, defend, cooldowns, EXP, levels and each role's special ability |
-| `tests/` | `unittest` tests for `castle.py`, `battle.py` (physics and collision), team combat and cover (`test_combat.py`), `characters.py`, `ai.py`, `animation.py` and `main.py` |
+| `tests/` | `unittest` tests for `castle.py`, `battle.py` (physics and collision), team combat and cover (`test_combat.py`), `characters.py`, `ai.py`, `animation.py`, `sound.py` and `main.py` |
 | `docs/M0_design.md` | Design: rules, architecture, roadmap (the latest decisions at the top) |
 | `docs/M3.1_balance_analysis.md` | M3.1 analysis of Defend and Repair (recommendations only, nothing changed) |
 | `docs/M3.2_balance_report.md` | M3.2 balance experiment under the old castle rules (historical; its script is in commit `86b90fa`) |
 | `docs/M3.2_benchmark_results.md`, `docs/M3.2_benchmark_results_easy.md` | That benchmark's generated result tables (historical) |
-| `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules (updated for M4.1) |
+| `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules (updated for M4.2-A) |
+| `docs/M4.2-B_defend_design_review.md` | M4.2-B: an audit of Defend and a proposed redesign, waiting for approval (not built) |
 | `docs/Rebound_reference_review.md` | Review of a reference project (ideas only) |
 
 ## References

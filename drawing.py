@@ -55,6 +55,17 @@ DAMAGE_COLOR = (200, 30, 30)        # floating damage numbers
 DRAW_COLOR = (150, 120, 50)         # the result banner of a draw (a win uses the winner's colour)
 # Crack lines inside a 32 px block: the first appears below 80 % HP, the second below 40 %.
 CRACKS = (((8, 4), (15, 14), (11, 24)), ((24, 6), (19, 17), (26, 28)))
+# M4.2-A (drawing only). The battlefield background: a sky that lightens toward the horizon,
+# pale far hills with two distant castles, nearer green hills, the ground and each team's flag.
+SKY_TOP, SKY_HORIZON = (112, 164, 218), (196, 225, 242)
+CLOUD_COLOR = (255, 255, 255, 70)     # see-through
+HILL_FAR, CASTLE_FAR = (172, 198, 216), (158, 184, 206)   # pale: far away, not part of the battle
+HILL_NEAR = (118, 152, 112)
+GRASS_EDGE = (128, 176, 92)           # the lighter top line of the ground
+# Team emblems, so the teams differ by shape as well as colour: LEFT a circle, RIGHT a diamond.
+EMBLEM_COLOR = (255, 255, 255)
+EMBLEM_Y = 19                          # the emblem's centre, from the top of a figure's 28 x 44 box
+PLATE_COLOR = (255, 255, 255, 150)    # the see-through plate behind each name and HP bar
 
 
 def block_color(side, hp, max_hp):
@@ -137,11 +148,76 @@ def wrap_text(text, font, max_width):
     return lines + [line] if line else lines
 
 
-def draw_figure(screen, role, center_x, top, facing, body_color):
+def draw_emblem(screen, side, center, size):
+    """The team emblem at `center`: a circle for LEFT, a diamond for RIGHT (M4.2-A), so a
+    player who can't tell red from blue can still tell the teams apart."""
+    x, y = center
+    if side == "left":
+        pygame.draw.circle(screen, EMBLEM_COLOR, center, size)
+    else:
+        reach = size + 1                   # a diamond looks smaller than a circle of the same size
+        pygame.draw.polygon(screen, EMBLEM_COLOR, [(x, y - reach), (x + reach, y), (x, y + reach), (x - reach, y)])
+
+
+def draw_badge(screen, side, center, radius):
+    """The team emblem on a disc of the team's colour, for light backgrounds (HUD, flags)."""
+    pygame.draw.circle(screen, TEAM_COLORS[side], center, radius)
+    draw_emblem(screen, side, center, radius // 2)
+
+
+_plates = {}
+
+
+def draw_plate(screen, rect):
+    """A see-through light plate (behind a name and its HP bar), so they read on any scenery."""
+    size = (rect.width, rect.height)
+    if size not in _plates:               # made once per size, then only copied
+        plate = pygame.Surface(size, pygame.SRCALPHA)
+        pygame.draw.rect(plate, PLATE_COLOR, plate.get_rect(), border_radius=5)
+        _plates[size] = plate
+    screen.blit(_plates[size], rect.topleft)
+
+
+def make_background(width, height, ground_y):
+    """The battlefield behind everything (M4.2-A), drawn once when the game starts: a sky
+    gradient, a few clouds, far hills with two small castles, near hills, the ground and a
+    flag for each team. Only a picture: nothing in it stops a shot or moves anything."""
+    surface = pygame.Surface((width, height))
+    for y in range(ground_y):
+        t = y / (ground_y - 1)
+        color = tuple(round(a + (b - a) * t) for a, b in zip(SKY_TOP, SKY_HORIZON))
+        pygame.draw.line(surface, color, (0, y), (width - 1, y))
+    clouds = pygame.Surface((width, ground_y), pygame.SRCALPHA)
+    for x, y, w, h in ((210, 150, 190, 40), (270, 134, 120, 34), (760, 112, 230, 46), (850, 96, 140, 34),
+                       (1080, 190, 170, 34)):
+        pygame.draw.ellipse(clouds, CLOUD_COLOR, (x - w // 2, y - h // 2, w, h))
+    surface.blit(clouds, (0, 0))
+    far = [(x, ground_y - 78 - 22 * math.sin(x / 160) - 12 * math.sin(x / 57 + 1.3)) for x in range(0, width + 8, 8)]
+    pygame.draw.polygon(surface, HILL_FAR, [(0, ground_y)] + far + [(width, ground_y)])
+    for center_x in (520, 770):           # two distant castles on the far hills, in the open middle
+        base = ground_y - 70
+        for dx, w, h in ((-22, 12, 34), (-10, 20, 24), (10, 12, 30)):
+            pygame.draw.rect(surface, CASTLE_FAR, (center_x + dx, base - h, w, h + 40))
+            for notch in range(0, w, 6):  # battlements
+                pygame.draw.rect(surface, CASTLE_FAR, (center_x + dx + notch, base - h - 4, 3, 4))
+    near = [(x, ground_y - 34 - 14 * math.sin(x / 110 + 2.0) - 6 * math.sin(x / 37)) for x in range(0, width + 8, 8)]
+    pygame.draw.polygon(surface, HILL_NEAR, [(0, ground_y)] + near + [(width, ground_y)])
+    pygame.draw.rect(surface, GROUND_COLOR, (0, ground_y, width, height - ground_y))
+    pygame.draw.line(surface, GRASS_EDGE, (0, ground_y), (width - 1, ground_y), 2)
+    for side, pole_x in (("left", 14), ("right", width - 15)):     # a flag behind each team
+        pygame.draw.line(surface, WOOD, (pole_x, ground_y - 164), (pole_x, ground_y), 3)
+        reach = 32 if side == "left" else -32
+        cloth = [(pole_x, ground_y - 162), (pole_x + reach, ground_y - 152), (pole_x, ground_y - 138)]
+        pygame.draw.polygon(surface, TEAM_COLORS[side], cloth)
+        draw_emblem(surface, side, (pole_x + reach // 3, ground_y - 151), 3)
+    return surface
+
+
+def draw_figure(screen, role, center_x, top, facing, body_color, team=None):
     """A simple figure for a character role, standing in the 28 x 44 box whose top is `top`.
 
     `facing` is +1 (looking right) or -1 (looking left); the shield, bow or hammer
-    is held on that side.
+    is held on that side. `team` ("left" / "right") adds the team emblem on the chest.
     """
     pygame.draw.rect(screen, body_color, (center_x - 9, top + 15, 18, 29), border_radius=4)
     pygame.draw.circle(screen, SKIN, (center_x, top + 8), 7)
@@ -165,9 +241,11 @@ def draw_figure(screen, role, center_x, top, facing, body_color):
                          border_top_left_radius=7, border_top_right_radius=7)           # hard hat
         pygame.draw.line(screen, WOOD, (front, top + 20), (front, top + 40), 3)          # hammer
         pygame.draw.rect(screen, STEEL, (front - 5, top + 16, 10, 6))
+    if team is not None:
+        draw_emblem(screen, team, (center_x, top + EMBLEM_Y), 3)
 
 
-def draw_running_figure(screen, role, center_x, top, facing, body_color, frame):
+def draw_running_figure(screen, role, center_x, top, facing, body_color, frame, team=None):
     """A figure running to or from the cannon (M3.4-C). `top` is where the standing figure's
     top would be. The body is lifted a little so two legs show under it; every 5 frames the
     legs swap and the body bobs up or down 2 px."""
@@ -176,12 +254,12 @@ def draw_running_figure(screen, role, center_x, top, facing, body_color, frame):
     ground = top + 44
     for hip_x, step in ((center_x - 3, stride), (center_x + 3, -stride)):
         pygame.draw.line(screen, TEXT_COLOR, (hip_x, ground - 12), (hip_x + step, ground - 1), 3)
-    draw_figure(screen, role, center_x, top - RUN_LIFT - 2 * phase, facing, body_color)
+    draw_figure(screen, role, center_x, top - RUN_LIFT - 2 * phase, facing, body_color, team)
 
 
-def draw_firing_figure(screen, role, center_x, top, facing, body_color):
+def draw_firing_figure(screen, role, center_x, top, facing, body_color, team=None):
     """A figure firing the cannon (M3.4-C): standing, one arm stretched out to the cannon."""
-    draw_figure(screen, role, center_x, top, facing, body_color)
+    draw_figure(screen, role, center_x, top, facing, body_color, team)
     pygame.draw.line(screen, SKIN, (center_x + facing * 6, top + 19), (center_x + facing * 17, top + 26), 3)
 
 

@@ -121,6 +121,11 @@ class MainTestCase(unittest.TestCase):
     def character_rect(self, side, index):
         return self.game.battle.teams[side].character_rect(index)
 
+    def background_at(self, x, y):
+        """What the empty battlefield shows at (x, y): sky, scenery or ground. (Until M4.2-A the
+        sky was one flat colour, so these tests compared with SKY_COLOR.)"""
+        return tuple(self.game.background.get_at((round(x), round(y))))[:3]
+
 
 class WindowSetupTest(MainTestCase):
     def test_text_input_is_off_so_an_input_method_cannot_capture_keys(self):
@@ -672,19 +677,21 @@ class AbilityPreflightTest(MainTestCase):
         self.click(self.game.action_buttons[action].rect)
         finish_shot(self.game)
 
-    def pixel_above_head(self, side, index):
-        """A screen pixel 8 px above a character's head: plain sky unless something is drawn there."""
+    def drawn_above_head(self, side, index):
+        """True if something is drawn 8 px above a character's head (otherwise only the
+        background shows there)."""
         self.game.draw()
         left, top, width, _ = self.character_rect(side, index)
-        return tuple(self.screen.get_at((left + width // 2, top - 8)))[:3]
+        x, y = left + width // 2, top - 8
+        return tuple(self.screen.get_at((x, y)))[:3] != self.background_at(x, y)
 
     def test_rally_halves_the_next_enemy_hit_on_every_living_ally(self):
         self.start([Knight, Archer, Engineer], [Archer, Engineer, Knight])
-        self.assertEqual(self.pixel_above_head("left", 1), main.SKY_COLOR)
+        self.assertFalse(self.drawn_above_head("left", 1))
         self.act("special")                                    # the left Knight (chosen first): Rally
         self.assertEqual(self.game.battle.active_side, "right")
         for index in range(3):                                 # every ally shows the defend bubble
-            self.assertNotEqual(self.pixel_above_head("left", index), main.SKY_COLOR)
+            self.assertTrue(self.drawn_above_head("left", index))
         self.act("attack", FRONT_CHARACTER)                    # right Archer hits slots 0 and 1
         left = self.game.battle.teams["left"].characters
         # Without Rally: 40-12 = 28 and 40-4 = 36. Rally halves each one; slot 2 is out of range.
@@ -694,7 +701,7 @@ class AbilityPreflightTest(MainTestCase):
         self.assertIn("LEFT Archer takes 18 damage", log)
         for _ in range(main.EXPLOSION_FRAMES):                 # let the explosion fade
             self.game.update()
-        self.assertEqual(self.pixel_above_head("left", 1), main.SKY_COLOR)   # Rally is over
+        self.assertFalse(self.drawn_above_head("left", 1))                 # Rally is over
 
     def test_power_shot_does_more_damage_than_the_same_archer_attack(self):
         self.start([Archer], [Knight])
@@ -1250,7 +1257,7 @@ class CannonRunTest(MainTestCase):
         rects = [team.character_rect(i) for team in teams for i in range(len(team.characters))]
         centres = [team.slot_center(i) for team in teams for i in range(len(team.characters))]
         slot, cannon = SLOT_X["left"][0], firing_x("left")
-        knight_colour, sky = main.TEAM_COLORS["left"], main.SKY_COLOR
+        knight_colour = main.TEAM_COLORS["left"]
         self.assertEqual(self.body_pixel(slot), knight_colour)
         aim(self.game, *COVER_WALL)
         self.click(self.game.action_buttons["attack"].rect)
@@ -1262,12 +1269,12 @@ class CannonRunTest(MainTestCase):
             if moment in ((RUN_TO_CANNON, RUN_FRAMES // 2), (FIRE, 1), (RETURN_TO_SLOT, RETURN_FRAMES // 2)):
                 seen[run.state] = run.actor_x()
                 self.assertEqual(self.body_pixel(run.actor_x()), knight_colour, moment)   # drawn here ...
-                self.assertEqual(self.body_pixel(slot), sky, moment)                     # ... and not at home
+                self.assertEqual(self.body_pixel(slot), self.background_at(slot, GROUND_Y - 20), moment)  # not at home
             self.game.update()
         halfway = (slot + cannon) / 2
         self.assertEqual(seen, {RUN_TO_CANNON: halfway, FIRE: cannon, RETURN_TO_SLOT: halfway})
         self.assertEqual(self.body_pixel(slot), knight_colour)            # back in its slot
-        self.assertEqual(self.body_pixel(cannon), sky)
+        self.assertEqual(self.body_pixel(cannon), self.background_at(cannon, GROUND_Y - 20))
 
     def test_the_flight_is_the_same_as_a_shot_fired_straight_from_the_battle(self):
         aim(self.game, *COVER_WALL)
@@ -1538,6 +1545,124 @@ class ComputerCannonRunTest(MainTestCase):
         self.assertEqual(self.game.cannon_run.shot.side, "right")
 
 
+class SoundEventsTest(MainTestCase):
+    """M4.2-A: the game plays a sound for the right Battle events, once each, and never needs one."""
+
+    def record_sounds(self):
+        """From now on, keep the names of the sounds the game plays (instead of playing them)."""
+        played = []
+        self.game.sounds.play = played.append
+        return played
+
+    def test_an_attack_on_cover_plays_fire_explosion_and_cover_hit_once_each(self):
+        self.start([Knight], [Engineer])
+        played = self.record_sounds()
+        aim(self.game, *COVER_WALL)
+        self.click(self.game.action_buttons["attack"].rect)
+        self.assertEqual(played, [])                              # nothing while running to the cannon
+        run_to_cannon(self.game)
+        self.assertEqual(played, ["fire"])                        # on the launch frame
+        finish_shot(self.game)
+        self.assertEqual(played, ["fire", "explosion", "cover_hit"])
+
+    def test_destroying_cover_plays_the_destruction_sound_instead(self):
+        self.start([Knight], [Engineer])
+        for block in self.game.battle.castles["right"].blocks:
+            block.take_damage(50)
+        played = self.record_sounds()
+        aim(self.game, *COVER_WALL)
+        self.click(self.game.action_buttons["attack"].rect)
+        finish_shot(self.game)
+        self.assertEqual(played, ["fire", "explosion", "cover_destroyed"])
+
+    def test_defend_specials_and_refused_actions_make_no_sound(self):
+        self.start([Engineer], [Knight])
+        played = self.record_sounds()
+        self.click(self.game.action_buttons["special"].rect)      # refused: nothing to repair
+        self.click(self.game.action_buttons["defend"].rect)       # LEFT defends
+        self.click(self.game.action_buttons["special"].rect)      # RIGHT Knight: Rally
+        self.assertEqual(played, [])
+
+    def test_a_winning_shot_plays_its_sounds_then_one_victory_tune(self):
+        self.start([Knight], [Archer])
+        self.game.battle.teams["right"].characters[0].take_damage(64)
+        played = self.record_sounds()
+        aim(self.game, *FRONT_CHARACTER)
+        self.click(self.game.action_buttons["attack"].rect)
+        finish_shot(self.game)
+        for _ in range(120):                                      # the result screen stays quiet
+            self.game.update()
+        self.assertEqual(played, ["fire", "explosion", "level_up", "victory"])
+
+    def test_against_the_computer_its_win_is_a_defeat_and_a_timeout_a_draw(self):
+        self.start_vs_ai([Knight])
+        played = self.record_sounds()
+        battle = self.game.battle
+        self.click(self.game.action_buttons["defend"].rect)       # LEFT passes ...
+        battle.teams["left"].characters[0].take_damage(500)       # ... and falls: the computer's turn ends it
+        for _ in range(main.AI_DELAY_FRAMES + 800):              # its pause, run and shot (up to 600 steps)
+            if self.game.state == "result":
+                break
+            self.game.update()
+        self.assertEqual(battle.winner, "right")
+        self.assertEqual(played[-1], "defeat")
+        self.assertEqual(played.count("defeat"), 1)
+        self.game.handle_key(pygame.K_r, 0)
+        for _ in range(2 * ROUND_LIMIT * 200):                    # both sides only defend, to the limit
+            if self.game.state == "result":
+                break
+            if battle.active_side == "left":
+                self.click(self.game.action_buttons["defend"].rect)
+            else:
+                battle.perform_action(0, "defend")                # the computer's side, by hand
+                self.game.update()
+        self.assertEqual(battle.end_reason, "timeout")
+        self.assertEqual(played[-1], "draw")
+
+    def test_a_rematch_stops_every_sound_and_none_comes_back(self):
+        self.start([Knight], [Engineer])
+        played = self.record_sounds()
+        stopped = []
+        self.game.sounds.stop = lambda: stopped.append(True)
+        aim(self.game, *COVER_WALL)
+        self.click(self.game.action_buttons["attack"].rect)
+        run_to_cannon(self.game)
+        self.game.handle_key(pygame.K_r, 0)                       # the shot is cancelled mid-flight
+        self.assertTrue(stopped)
+        for _ in range(300):
+            self.game.update()
+        self.assertEqual(played, ["fire"])
+
+    def test_m_turns_the_sound_off_and_on(self):
+        self.start([Knight], [Engineer])
+        self.game.handle_key(pygame.K_m, 0)
+        self.assertTrue(self.game.sounds.muted)
+        self.assertIn("Sound off", self.game.message)
+        self.game.handle_key(pygame.K_m, 0)
+        self.assertFalse(self.game.sounds.muted)
+        self.assertIn("Sound on", self.game.message)
+        self.game.state = "select"                                # it works on every screen
+        self.game.handle_key(pygame.K_m, 0)
+        self.assertTrue(self.game.sounds.muted)
+
+    def test_the_whole_game_works_without_an_audio_device(self):
+        pygame.mixer.quit()
+        with unittest.mock.patch("pygame.mixer.init", side_effect=pygame.error("no audio device")), \
+                unittest.mock.patch("pygame.mixer.get_init", return_value=None):
+            self.game = main.Game(self.screen)
+        self.assertFalse(self.game.sounds.available)
+        self.start([Knight], [Archer])
+        self.game.battle.teams["right"].characters[0].take_damage(64)
+        aim(self.game, *FRONT_CHARACTER)
+        self.click(self.game.action_buttons["attack"].rect)
+        finish_shot(self.game)
+        self.assertEqual(self.game.state, "result")
+        self.game.handle_key(pygame.K_m, 0)
+        self.game.handle_key(pygame.K_r, 0)
+        self.game.draw()
+        self.assertEqual(self.game.state, "battle")
+
+
 def contrast(colour_a, colour_b):
     """The WCAG contrast ratio of two RGB colours (4.5 or more is easy to read for small text)."""
     def luminance(colour):
@@ -1695,12 +1820,13 @@ class InterfacePolishTest(MainTestCase):
         self.assertEqual([drawing.block_cracks(hp, 100) for hp in (100, 80, 79, 40, 39, 1)], [0, 0, 1, 1, 2, 2])
         self.start([Knight], [Archer])
         blocks = self.game.battle.castles["right"].blocks
-        sky = self.pixel(blocks[0].x + 1, blocks[0].y + 16)
-        self.assertNotEqual(sky, main.SKY_COLOR)                  # a standing block
+        standing = self.pixel(blocks[0].x + 1, blocks[0].y + 16)
+        self.assertNotEqual(standing, self.background_at(blocks[0].x + 1, blocks[0].y + 16))   # a standing block
         blocks[0].take_damage(100)                                 # destroyed: no longer stops shots ...
         self.assertTrue(blocks[0].is_destroyed())
         self.assertEqual(self.pixel(blocks[0].x, blocks[0].y + 4), drawing.RUBBLE_COLOR)   # ... but its place shows
-        self.assertEqual(self.pixel(blocks[0].x + 16, blocks[0].y + 16), main.SKY_COLOR)
+        self.assertEqual(self.pixel(blocks[0].x + 16, blocks[0].y + 16),
+                         self.background_at(blocks[0].x + 16, blocks[0].y + 16))
 
     def test_hp_bars_turn_red_below_a_quarter(self):
         archer = Archer("A", "left")
@@ -1711,8 +1837,14 @@ class InterfacePolishTest(MainTestCase):
         self.assertEqual(colours, [drawing.HP_GOOD, drawing.HP_HURT, drawing.HP_HURT, drawing.HP_LOW])
 
     def test_names_on_the_battlefield_are_easy_to_read(self):
-        for side in ("left", "right"):
-            self.assertGreaterEqual(contrast(main.LABEL_COLORS[side], main.SKY_COLOR), 4.5, side)
+        # Since M4.2-A every name sits on a light plate (the sky and scenery behind vary).
+        self.start([Knight, Archer, Engineer], [Engineer, Knight, Archer])
+        self.game.draw()
+        for side, team in self.game.battle.teams.items():
+            for index in range(3):
+                plate = self.game.label_plate_rect(side, index)
+                behind = tuple(self.screen.get_at((plate.left + 2, plate.centery)))[:3]
+                self.assertGreaterEqual(contrast(main.LABEL_COLORS[side], behind), 4.5, (side, index, behind))
 
     # ----- buttons, selection and placement ---------------------------------------------
 
@@ -1758,6 +1890,96 @@ class InterfacePolishTest(MainTestCase):
         defend_until_the_end(self)
         self.assertEqual(self.pixel(banner.left + 4, banner.top + 4), main.DRAW_COLOR)
         self.assertIn("time limit", self.game.result_subtitle().lower())
+
+
+class AtmosphereTest(MainTestCase):
+    """M4.2-A: a battlefield with depth and teams told apart by shape. Drawing only."""
+
+    def pixel(self, x, y):
+        self.game.draw()
+        return tuple(self.screen.get_at((round(x), round(y))))[:3]
+
+    def test_the_background_has_depth_and_is_made_only_once(self):
+        background = self.game.background
+        self.start([Knight], [Archer])
+        self.game.draw()
+        self.game.handle_key(pygame.K_r, 0)
+        self.game.draw()
+        self.assertIs(self.game.background, background)              # built once, then only copied
+        top, horizon = self.background_at(640, 90), self.background_at(640, 440)
+        self.assertLess(sum(top), sum(horizon))                       # the sky lightens toward the horizon
+        scenery = {self.background_at(x, y) for x in range(0, main.WINDOW_WIDTH, 40) for y in (470, 500, 535)}
+        self.assertGreaterEqual(len(scenery), 3)                      # sky, far and near hills: not flat
+        self.assertEqual(self.background_at(640, main.GROUND_Y + 10), main.GROUND_COLOR)   # the ground is where it was
+        self.assertNotEqual(self.background_at(640, main.GROUND_Y - 1), main.GROUND_COLOR)
+
+    def test_drawing_the_scenery_changes_nothing_in_the_battle(self):
+        self.start([Knight, Archer, Engineer], [Engineer, Knight, Archer])
+        battle = self.game.battle
+
+        def state():
+            return ([t.character_rect(i) for t in battle.teams.values() for i in range(3)],
+                    [b.rect() for c in battle.castles.values() for b in c.blocks],
+                    [(c.x, c.y, c.angle, c.power) for c in battle.cannons.values()])
+        before = state()
+        for _ in range(3):
+            self.game.draw()
+        self.assertEqual(state(), before)
+
+    def test_the_teams_differ_by_emblem_shape_as_well_as_colour(self):
+        self.start([Knight], [Knight])
+        for side, tip_is_white in (("left", False), ("right", True)):
+            left, top, width, _ = self.character_rect(side, 0)
+            x, y = left + width // 2, top + main.EMBLEM_Y
+            self.assertEqual(self.pixel(x, y), main.EMBLEM_COLOR, side)              # a white emblem ...
+            tip = self.pixel(x, y - 4)                                               # ... a diamond has a tip
+            self.assertEqual(tip == main.EMBLEM_COLOR, tip_is_white, side)
+        for side, (x, y) in self.game.hud_emblem_centres().items():                   # also in the HUD
+            self.assertEqual(self.pixel(x, y), main.EMBLEM_COLOR, side)
+
+    def test_floating_words_on_one_character_never_overlap(self):
+        self.start([Knight], [Archer])
+        hit = {"type": "explosion", "side": "left", "kind": "character", "x": 1140, "y": 520, "target": "Archer",
+               "blocks_hit": 0, "damage": 0, "guarded": False, "covered": [],
+               "characters_hit": [{"name": "Archer", "damage": 26, "defeated": False}]}
+        for _ in range(3):                                            # three quick hits on the same Archer
+            self.game.show_event(dict(hit))
+        rects = [self.game.floater_rect(floater) for floater in self.game.floaters]
+        self.assertEqual(len(rects), 3)
+        for i, a in enumerate(rects):
+            for b in rects[i + 1:]:
+                self.assertFalse(a.colliderect(b), (a, b))
+
+    def test_the_turn_banner_never_runs_into_the_team_lines(self):
+        self.start_vs_ai([Knight, Archer, Engineer])
+        battle = self.game.battle
+        battle.round_number = ROUND_LIMIT
+        battle.active_side = "right"
+        self.game.cannon_run.start(main.PendingShot("right", 0, "attack", 45, 50), SLOT_X["right"][0])
+        self.assertTrue(self.game.hud_turn_text().endswith("(computer): running to the cannon"))   # the longest
+        banner = self.game.hud_banner_rect()
+        for side_line in self.game.hud_side_rects().values():
+            self.assertFalse(banner.colliderect(side_line), (banner, side_line))
+        self.game.cannon_run.cancel()
+
+    def test_the_cover_screen_text_stays_readable_on_the_sky(self):
+        self.pick_teams([Knight], [Archer])
+        self.click(self.game.start_button.rect)
+        for side in ("left", "right"):
+            self.game.draw()
+            plate = self.game.cover_text_plate_rect()
+            self.assertLessEqual(plate.top, 30)
+            self.assertGreaterEqual(plate.bottom, self.game.cover_text_bottom())    # title, help and legend
+            behind = tuple(self.screen.get_at((plate.left + 3, plate.top + 30)))[:3]
+            self.assertGreaterEqual(contrast(self.game.cover_title_color(), behind), 4.5, side)
+            self.assertGreaterEqual(contrast(main.TEXT_COLOR, behind), 4.5, side)
+            self.click(self.game.confirm_button.rect)                              # RIGHT's screen next
+
+    def test_the_panel_says_how_to_turn_the_sound_off(self):
+        self.start([Knight], [Archer])
+        self.assertIn("M: sound", self.game.log_header())
+        self.game.handle_key(pygame.K_m, 0)
+        self.assertIn("sound off", self.game.log_header().lower())
 
 
 if __name__ == "__main__":

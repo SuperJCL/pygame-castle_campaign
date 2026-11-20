@@ -2218,3 +2218,10 @@ click on the greyed DEFEND). All 14 were caught.
 **Remaining limits:** the computer's Defend policy is simple (the weakest character, at random),
 so the balance numbers describe this AI, not a skilled player; whether × 1.25 and the rule feel
 right needs human play-testing.
+
+**M4.2-B.1 (safety fix):** `AIController.choose()` had a last-resort safety net that assumed Defend
+is always legal, which the anti-stall rule broke: right after the team's own Defend it returned a
+refused Defend, and the computer's turn stayed stuck (reproduced by a test). `safety_plan()` now
+checks with `Battle.why_not_allowed` and returns a Defend if allowed, otherwise a normal Attack
+with `FALLBACK_AIM` by the first living character, which is always allowed on the AI's turn. No
+randomness is involved, so the difficulty settings and probabilities are unchanged.

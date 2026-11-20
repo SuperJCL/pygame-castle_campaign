@@ -17,7 +17,7 @@ try:
     import pygame
     import drawing
     import main
-    from ai import AIController
+    from ai import AIController, Plan
     from animation import FIRE, FIRE_FRAMES, RETURN_FRAMES, RETURN_TO_SLOT, RUN_FRAMES, RUN_TO_CANNON, firing_x
     from battle import CANNON_PIVOT, ROUND_LIMIT, SLOT_X, Battle
     from castle import DEFAULT_LAYOUT, GROUND_Y, layout_problem, slot_position
@@ -1138,6 +1138,27 @@ class PlayerVsAIBattleTest(MainTestCase):
         self.click(self.character_rect("right", 0))
         self.assertIn("computer", self.game.message)
         self.assertIn("computer", " ".join(self.game.action_hint_lines()))
+
+    def test_the_computers_turn_never_gets_stuck_when_its_plan_is_refused(self):
+        # M4.2-B.1: right after its own Defend, the computer's final safety net must not be a
+        # Defend (the anti-stall rule refuses it); it attacks, and the turn moves on.
+        battle = self.game.battle
+        self.game.handle_key(pygame.K_r, 0)                       # RIGHT (the computer) moves first
+        battle.perform_action(0, "defend")                        # RIGHT defends (by hand) ...
+        self.game.update()
+        self.click(self.game.action_buttons["defend"].rect)       # ... LEFT passes: RIGHT again
+        self.assertIsNotNone(battle.why_not_allowed(0, "defend"))
+        illegal = Plan(5, "attack", 45, 70, reason="a slot that doesn't exist")
+        self.game.ai.attack_plan = lambda *args: illegal
+        self.game.ai.defensive_plan = lambda *args: illegal
+        for _ in range(main.AI_DELAY_FRAMES + 900):               # its pause, the run and the shot
+            if battle.active_side == "left" or self.game.state == "result":
+                break
+            self.game.update()
+        self.assertEqual(battle.active_side, "left")
+        log = " ".join(self.game.log)
+        self.assertIn("safety net", log)
+        self.assertNotIn("Not allowed", log)
 
     def test_a_whole_match_against_the_computer_ends_on_the_result_screen(self):
         for _ in range(20000):                                    # the human only passes

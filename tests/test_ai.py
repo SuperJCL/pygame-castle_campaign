@@ -9,6 +9,7 @@ import os
 import re
 import time
 import unittest
+import unittest.mock
 
 from ai import DIFFICULTY_SETTINGS, AIController, Plan, find_routes, imagine, scan_aims, shot_value
 from battle import MAX_ANGLE, MAX_POWER, MAX_STEPS, MIN_ANGLE, MIN_POWER, ROUND_LIMIT, Battle
@@ -694,6 +695,52 @@ class AntiStallAndGuardedStrikeAITest(unittest.TestCase):
             plan = AIController("right", "hard", seed=seed).choose(battle)
             check_plan_is_legal(self, battle, plan)
             self.assertNotEqual(plan.action, "defend")
+
+    def right_just_defended(self):
+        """A battle where it is RIGHT's turn and RIGHT's previous action was a Defend, so the
+        anti-stall rule forbids RIGHT another Defend now."""
+        battle = combat([Knight], [Archer, Engineer], first_side="right")
+        battle.perform_action(1, "defend")
+        pass_turn(battle)
+        battle.take_events()
+        return battle
+
+    def choose_with_an_illegal_first_plan(self, battle):
+        """choose() when every plan the AI makes first is one the Battle refuses (a slot that
+        doesn't exist), so only the final safety net is left."""
+        illegal = Plan(5, "attack", 45, 70, reason="a slot that doesn't exist")
+        self.assertIsNotNone(battle.why_not_allowed(illegal.actor_index, illegal.action))
+        ai = AIController("right", "normal", seed=0)
+        with unittest.mock.patch.object(ai, "attack_plan", return_value=illegal),                 unittest.mock.patch.object(ai, "defensive_plan", return_value=illegal):
+            return ai, ai.choose(battle)
+
+    def test_the_safety_net_attacks_when_the_anti_stall_rule_forbids_defend(self):
+        battle = self.right_just_defended()
+        self.assertIsNotNone(battle.why_not_allowed(0, "defend"))
+        ai, plan = self.choose_with_an_illegal_first_plan(battle)
+        self.assertEqual(plan.action, "attack")                   # not the refused Defend
+        self.assertIsNone(battle.why_not_allowed(plan.actor_index, plan.action))
+        self.assertTrue(battle.teams["right"].characters[plan.actor_index].is_alive())
+        self.assertIn("safety net", plan.reason)
+        self.assertIs(ai.carry_out(battle, plan), plan)            # the Battle accepts it ...
+        events = fly(battle)
+        self.assertEqual([e for e in events if e["type"] == "invalid"], [])
+        self.assertEqual(battle.active_side, "left")               # ... and the turn moves on
+
+    def test_the_safety_net_still_defends_when_defend_is_allowed(self):
+        battle = right_to_move([Knight], [Archer, Engineer])
+        ai, plan = self.choose_with_an_illegal_first_plan(battle)
+        self.assertEqual(plan.action, "defend")
+        self.assertIsNone(battle.why_not_allowed(plan.actor_index, plan.action))
+        self.assertIs(ai.carry_out(battle, plan), plan)
+        self.assertEqual(battle.active_side, "left")
+
+    def test_the_safety_net_skips_defeated_characters(self):
+        battle = self.right_just_defended()
+        battle.teams["right"].characters[0].take_damage(500)       # the first slot has fallen
+        _, plan = self.choose_with_an_illegal_first_plan(battle)
+        self.assertEqual((plan.actor_index, plan.action), (1, "attack"))
+        self.assertIsNone(battle.why_not_allowed(plan.actor_index, plan.action))
 
     def test_the_computer_values_a_ready_guarded_strike(self):
         # Its search imagines shots with the real rules, so the bonus shows in what it expects.

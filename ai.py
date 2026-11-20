@@ -338,12 +338,29 @@ class AIController:
         else:
             plan = self.attack_plan(battle, use_specials)
         if battle.why_not_allowed(plan.actor_index, plan.action) is not None:
-            # A safety net (it should never be needed): Defend is always allowed on our turn.
-            first_alive = next(i for i, c in enumerate(team.characters) if c.is_alive())
-            plan = Plan(first_alive, "defend", defensive=True, goal="defend",
-                        reason=f"{team.characters[first_alive].name} defends (safety net: "
-                               f"the planned action was not allowed)")
+            plan = self.safety_plan(battle)          # it should never be needed
         return plan
+
+    def safety_plan(self, battle):
+        """A plan the Battle is sure to accept, for when the chosen one was refused.
+
+        Defend by the first living character if Defend is allowed; otherwise (since M4.2-B the
+        anti-stall rule forbids a Defend right after the team's own Defend) a normal Attack
+        with FALLBACK_AIM by the first living character. Both are checked with
+        Battle.why_not_allowed; on our turn a living character may always Attack, so this
+        always finds a plan and the turn can't get stuck."""
+        for index, character in enumerate(battle.teams[self.side].characters):
+            if not character.is_alive():
+                continue
+            why = "the planned action was not allowed"
+            if battle.why_not_allowed(index, "defend") is None:
+                return Plan(index, "defend", defensive=True, goal="defend",
+                            reason=f"{character.name} defends (safety net: {why})")
+            if battle.why_not_allowed(index, "attack") is None:
+                angle, power = FALLBACK_AIM
+                return Plan(index, "attack", angle, power,
+                            reason=f"{character.name} attacks (safety net: {why})")
+        return None                                   # not our turn after all (choose() checked)
 
     def wants_to_defend(self, team):
         """Roll the dice for a defensive turn.

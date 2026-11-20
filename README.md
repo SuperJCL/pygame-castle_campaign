@@ -6,7 +6,7 @@ stands behind its own cover blocks and shares one cannon standing in front of th
 teams take turns: pick a character, aim the cannon, and Attack, Defend or use a Special ability.
 **You win by defeating every enemy character.**
 
-**Current status: Milestone 4.2-B — Defend redesign (Guarded Strike and the anti-stall rule).**
+**Current status: Milestone 4.3 — final gameplay stabilization (gameplay feature-frozen).**
 - Only elimination wins. Castle destruction is not a victory condition.
 - Before each battle, every team places its own cover: up to 6 blocks on 8 fixed slots. Against
   the computer you place the LEFT cover and the computer places its own.
@@ -25,6 +25,9 @@ teams take turns: pick a character, aim the cannon, and Attack, Defend or use a 
 - M4.2-B: **a gameplay change**, approved after a design review: a Defend now also gives that
   character **Guarded Strike** (its Attack in your team's next turn uses ATK × 1.25), and a team
   **can't Defend two turns in a row**. Defend still halves the damage the defender takes.
+- M4.3: a full regression of every mode, size, cover type and first mover through the real
+  interface; no gameplay defect was found and no rule changed
+  (`docs/M4.3_stabilization_report.md`, screenshots in `docs/screenshots/`).
 
 You play the LEFT team against a computer opponent (Easy, Normal or Hard), or two people play
 each other on one computer. The design and roadmap are in [docs/M0_design.md](docs/M0_design.md).
@@ -361,8 +364,10 @@ python -m unittest discover tests
 | `docs/M3.1_balance_analysis.md` | M3.1 analysis of Defend and Repair (recommendations only, nothing changed) |
 | `docs/M3.2_balance_report.md` | M3.2 balance experiment under the old castle rules (historical; its script is in commit `86b90fa`) |
 | `docs/M3.2_benchmark_results.md`, `docs/M3.2_benchmark_results_easy.md` | That benchmark's generated result tables (historical) |
-| `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules (updated for M4.2-B) |
+| `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules (updated for M4.3) |
 | `docs/M4.2-B_defend_design_review.md` | M4.2-B: the audit of Defend and the redesign that was approved and built (Guarded Strike, anti-stall) |
+| `docs/M4.3_stabilization_report.md` | M4.3: the final stabilization report (test matrix, seeded matches, course-compliance gaps, remaining human checks) |
+| `docs/screenshots/` | Eight representative screenshots of the current game |
 | `docs/Rebound_reference_review.md` | Review of a reference project (ideas only) |
 
 ## References

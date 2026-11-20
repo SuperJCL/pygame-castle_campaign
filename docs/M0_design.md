@@ -1,17 +1,18 @@
 # Castle Siege — M0 Requirements and Architecture
 
-Status: **Revision 3 (M2.3), updated for M4.2-B.** This is the living design document. The game
-is implemented up to M4.2-B (Player vs AI, two-player hot seat, the M3.2 balance numbers, the
+Status: **Revision 3 (M2.3), updated for M4.3.** This is the living design document. The game
+is implemented up to M4.3 (Player vs AI, two-player hot seat, the M3.2 balance numbers, the
 M3.3 match flow, the M3.4-A redesign: elimination-only victory and deployable cover, M3.4-B: the
 cover placement screen and a cover-aware computer opponent, M3.4-B.1: Easy's aiming error
 lowered so that its matches finish, M3.4-C: the character-to-cannon animation, M4.1: interface
 and visual polish, cosmetic only, M4.2-A: sound, atmosphere and readability, presentation only,
-and M4.2-B: Guarded Strike and the anti-stall rule for Defend, a gameplay change approved after
-`docs/M4.2-B_defend_design_review.md`). Revision 3's
+M4.2-B: Guarded Strike and the anti-stall rule for Defend, a gameplay change approved after
+`docs/M4.2-B_defend_design_review.md`, and M4.3: the final stabilization, with gameplay
+feature-frozen; see `docs/M4.3_stabilization_report.md`). Revision 3's
 final decisions and the M3.2 / M3.3 / M3.4 changes, just below, override anything older in this
 document; **where they disagree, the later M3.4 block wins (M3.4-C, then M3.4-B, then M3.4-A).**
 The AI that was built differs from the plan in §6.3; see §14, "M3.1 notes" and "M3.4-B notes".
-The course-compliance checklist is `docs/M3.3_course_compliance.md` (updated for M4.2-B).
+The course-compliance checklist is `docs/M3.3_course_compliance.md` (updated for M4.3).
 
 ### Revision 3 — final decisions (made by the PM and the user in M2.3)
 - **Alternating turns are the final design. Simultaneous turns are cancelled.** The left team
@@ -1097,7 +1098,9 @@ open (see M3). The original plan follows.
 **M4 status:** M4.1 (interface and visual polish, cosmetic only) done and approved; it covers this
 section's crack lines and visible event feedback. M4.2-A (sound, atmosphere, readability;
 presentation only) done, accepted with two items unverified; it covers the sounds and the silent
-fallback. M4.2-B (Defend: Guarded Strike and the anti-stall rule) done, awaiting PM review.
+fallback. M4.2-B (Defend: Guarded Strike and the anti-stall rule) done and accepted (with the M4.2-B.1 AI safety
+fix). M4.3 (final gameplay stabilization; no rule changed, no defect found) done, awaiting PM
+review: `docs/M4.3_stabilization_report.md`. Next: M5, only after PM approval.
 
 **Updated in M2.3.**
 - **Required:** Player vs AI.

@@ -35,6 +35,11 @@ class SynthesisTest(unittest.TestCase):
             for b in names[i + 1:]:
                 self.assertNotEqual(made[a], made[b], (a, b))
 
+    def test_there_are_sounds_for_attack_defence_victory_and_defeat(self):
+        # The instructor asks for sounds for attack, defence, victory and defeat (M5.2-A).
+        for name in ("fire", "defend", "victory", "defeat"):
+            self.assertIn(name, sound.SOUND_NAMES)
+
     def test_the_same_sound_is_made_the_same_way_every_time(self):
         self.assertEqual(sound.synthesize("explosion", 22050), sound.synthesize("explosion", 22050))
 

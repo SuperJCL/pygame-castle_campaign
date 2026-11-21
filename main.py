@@ -25,7 +25,7 @@ Battle.perform_action() when it gets there, and it runs back while the shot flie
 input and the computer wait until it is back. Defend, Rally and Repair still happen at once.
 
 Sound (M4.2-A, sound.py): effects made in code play for Battle events (a shot, an explosion,
-cover hit or destroyed, a level-up, the result). M turns the sound off and on; without an audio
+cover hit or destroyed, a Defend or Rally (M5.2-A), a level-up, the result). M turns the sound off and on; without an audio
 device the game is silent and works the same.
 
 Run from the project folder:   python main.py
@@ -40,7 +40,7 @@ from battle import (BLAST_RADIUS, CHARACTER_HEIGHT, FIELD_WIDTH, MAX_POWER, MAX_
                     ROUND_LIMIT, SLOT_X, Battle, Cannon, direction, other_side)
 from castle import (BLOCK_SIZE, COLUMN_X, DEFAULT_LAYOUT, GROUND_Y, MAX_BLOCKS, SLOT_COUNT,
                     layout_problem, place_block, remove_block, slot_position)
-from characters import ARCHETYPES, MAX_LEVEL, Archer
+from characters import ARCHETYPES, MAX_LEVEL, Archer, Knight
 from drawing import (ACTIVE_RING_COLOR, AIM_COLOR, BUTTON_OFF, CANNON_COLOR, CLOSED_SLOT_COLOR,
                      COOLDOWN_COLOR, DAMAGE_COLOR, DEFEATED_COLOR, DEFEND_COLOR, DIM_TEXT, DRAW_COLOR,
                      FLASH_COLOR, FLASH_EDGE, GROUND_COLOR, GUARD_COLOR, LABEL_COLORS, LIGHT_TEXT,
@@ -695,10 +695,13 @@ class Game:
 
     def play_event_sound(self, event):
         """The sound for one battle event (M4.2-A). Each event is read once, so each sound plays
-        once; a refused action, Defend and Rally make no sound."""
+        once. A Defend, and a Knight's Rally (the whole team defends), play the defend sound
+        (M5.2-A). A refused action is an "invalid" event and makes no sound; nor does Repair."""
         kind = event["type"]
         if kind == "fire":
             self.sounds.play("fire")
+        elif (kind == "action" and event["action"] == "defend") or (kind == "special" and self.is_rally(event)):
+            self.sounds.play("defend")
         elif kind == "explosion":
             self.sounds.play("explosion")
             target = other_side(event["side"])
@@ -718,6 +721,11 @@ class Game:
                 self.sounds.play("defeat")     # against the computer, its win is your defeat
             else:
                 self.sounds.play("victory")
+
+    def is_rally(self, event):
+        """True if a "special" event is a Knight's Rally (characters are named after their role)."""
+        return any(character.name == event["name"] and isinstance(character, Knight)
+                   for character in self.battle.teams[event["side"]].characters)
 
     def add_floater(self, side, name, text, color, below=False):
         """A word or number floating up from above a character (M4.1): "-28", "DEFEATED", "shielded"."""

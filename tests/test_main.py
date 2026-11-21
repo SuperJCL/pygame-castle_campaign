@@ -1611,13 +1611,72 @@ class SoundEventsTest(MainTestCase):
         finish_shot(self.game)
         self.assertEqual(played, ["fire", "explosion", "cover_destroyed"])
 
-    def test_defend_specials_and_refused_actions_make_no_sound(self):
+    def test_a_successful_defend_plays_the_defend_sound_once(self):
+        # M5.2-A: the instructor asks for a defence sound.
+        self.start([Knight], [Engineer])
+        played = self.record_sounds()
+        self.click(self.game.action_buttons["defend"].rect)       # LEFT defends
+        for _ in range(60):                                       # later frames add nothing
+            self.game.update()
+        self.assertEqual(played, ["defend"])
+
+    def test_a_refused_defend_and_other_refused_actions_make_no_sound(self):
+        self.start([Engineer], [Knight])
+        self.click(self.game.action_buttons["defend"].rect)       # LEFT defends
+        aim(self.game, *HARMLESS)
+        self.click(self.game.action_buttons["attack"].rect)       # RIGHT passes with a harmless shot
+        finish_shot(self.game)
+        played = self.record_sounds()
+        self.click(self.game.action_buttons["defend"].rect)       # greyed out: two turns in a row
+        self.game.do_action("defend")                             # and refused by the rules
+        self.assertFalse(self.game.battle.perform_action(0, "defend"))   # an "invalid" event
+        self.click(self.game.action_buttons["special"].rect)      # refused: nothing to repair
+        for _ in range(10):
+            self.game.update()
+        self.assertEqual(played, [])
+        self.assertEqual(self.game.battle.active_side, "left")    # nothing happened
+
+    def test_rally_reuses_the_defend_sound_and_repair_stays_silent(self):
         self.start([Engineer], [Knight])
         played = self.record_sounds()
-        self.click(self.game.action_buttons["special"].rect)      # refused: nothing to repair
-        self.click(self.game.action_buttons["defend"].rect)       # LEFT defends
+        self.click(self.game.action_buttons["defend"].rect)       # LEFT Engineer defends
         self.click(self.game.action_buttons["special"].rect)      # RIGHT Knight: Rally
-        self.assertEqual(played, [])
+        self.assertEqual(played, ["defend", "defend"])
+        self.game.battle.castles["left"].blocks[0].take_damage(30)
+        self.click(self.game.action_buttons["special"].rect)      # LEFT Engineer: Repair
+        self.assertEqual(self.game.battle.active_side, "right")   # the Repair was carried out
+        self.assertEqual(played, ["defend", "defend"])
+
+    def test_the_computer_s_defend_plays_the_defend_sound_too(self):
+        self.start_vs_ai([Knight])
+        aim(self.game, *HARMLESS)
+        self.click(self.game.action_buttons["attack"].rect)       # LEFT passes
+        finish_shot(self.game)
+        played = self.record_sounds()
+        self.game.ai.carry_out(self.game.battle, Plan(0, "defend", defensive=True))
+        self.game.update()
+        self.assertEqual(played, ["defend"])
+
+    def test_m_silences_the_defend_sound(self):
+        self.start([Knight], [Engineer])
+        board = self.game.sounds
+        board.sounds["defend"] = effect = unittest.mock.Mock()    # stands in for the real Sound
+        self.game.handle_key(pygame.K_m, 0)                       # sound off
+        self.click(self.game.action_buttons["defend"].rect)       # LEFT defends: silent
+        self.assertEqual(effect.play.call_count, 0)
+        self.game.handle_key(pygame.K_m, 0)                       # sound on
+        self.click(self.game.action_buttons["defend"].rect)       # RIGHT defends: heard
+        self.assertEqual(effect.play.call_count, 1)
+
+    def test_a_rematch_right_after_a_defend_stops_every_sound(self):
+        self.start([Knight], [Engineer])
+        played = self.record_sounds()
+        stopped = []
+        self.game.sounds.stop = lambda: stopped.append(True)
+        self.click(self.game.action_buttons["defend"].rect)
+        self.game.handle_key(pygame.K_r, 0)
+        self.assertEqual(played, ["defend"])
+        self.assertTrue(stopped)
 
     def test_a_winning_shot_plays_its_sounds_then_one_victory_tune(self):
         self.start([Knight], [Archer])

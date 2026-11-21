@@ -6,8 +6,8 @@ them into pygame.mixer.Sound objects once, when the game starts.
 
 The game never depends on sound: if the computer has no audio device, or the mixer can't
 be started, SoundBoard is simply silent (available is False) and play() does nothing.
-main.py plays a sound when it reads a Battle event (a shot fired, an explosion, a level-up,
-the end of the game); nothing here changes a rule.
+main.py plays a sound when it reads a Battle event (a shot fired, an explosion, a Defend or
+Rally, a level-up, the end of the game); nothing here changes a rule.
 """
 import array
 import functools
@@ -19,7 +19,8 @@ import pygame
 SAMPLE_RATE = 22050            # samples per second: plenty for short effects
 BUFFER = 512                   # mixer buffer: about 23 ms, so a sound starts with no noticeable delay
 VOLUME = 0.6
-SOUND_NAMES = ("fire", "explosion", "cover_hit", "cover_destroyed", "level_up", "victory", "defeat", "draw")
+SOUND_NAMES = ("fire", "explosion", "cover_hit", "cover_destroyed", "defend", "level_up", "victory", "defeat",
+               "draw")
 PEAK = 0.9                     # every effect is scaled to this loudest sample
 FADE_OUT = 0.01                # the last 10 ms fade to silence, so no effect ends with a click
 
@@ -55,6 +56,19 @@ def _crumble(rate, rng):
     return samples
 
 
+def _clang(rate, rng):
+    """Defend (M5.2-A): a shield is raised. A short scrape of noise, then a metallic ring: two
+    tones that are not whole multiples of each other, which is what makes it sound like metal."""
+    samples, smoothed = [], 0.0
+    for i in range(int(rate * 0.4)):
+        t = i / rate
+        smoothed += 0.6 * (rng.uniform(-1, 1) - smoothed)
+        scrape = smoothed * math.exp(-t * 40)
+        ring = (math.sin(2 * math.pi * 620 * t) + 0.6 * math.sin(2 * math.pi * 1490 * t)) * math.exp(-t * 9)
+        samples.append(min(1.0, t / 0.004) * (0.5 * scrape + 0.5 * ring))
+    return samples
+
+
 def _melody(rate, notes, harmonics, decay):
     """Notes one after another: each (frequency in Hz, seconds), a sine plus some overtones."""
     samples = []
@@ -82,6 +96,8 @@ def synthesize(name, rate):
         samples = _bang(rate, 0.16, 40, 0.5, 220, 140, 30, 0.8, rng)
     elif name == "cover_destroyed":       # a block breaks: rubble
         samples = _crumble(rate, rng)
+    elif name == "defend":                # Defend or Rally: a metal shield rings
+        samples = _clang(rate, rng)
     elif name == "level_up":              # three quick rising notes
         samples = _melody(rate, ((784, 0.12), (988, 0.12), (1319, 0.2)), ((1, 1.0), (2, 0.3)), 6)
     elif name == "victory":               # C - E - G - high C

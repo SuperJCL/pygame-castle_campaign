@@ -6,7 +6,7 @@ stands behind its own cover blocks and shares one cannon standing in front of th
 teams take turns: pick a character, aim the cannon, and Attack, Defend or use a Special ability.
 **You win by defeating every enemy character.**
 
-**Current status: Milestone 5.1 — final submission audit and report draft (documentation only; gameplay feature-frozen since M4.3).**
+**Current status: Milestone 5.2-A — instructor compliance and the final report (gameplay feature-frozen since M4.3, except the required defend sound).**
 - Only elimination wins. Castle destruction is not a victory condition.
 - Before each battle, every team places its own cover: up to 6 blocks on 8 fixed slots. Against
   the computer you place the LEFT cover and the computer places its own.
@@ -30,6 +30,10 @@ teams take turns: pick a character, aim the cannon, and Attack, Defend or use a 
   (`docs/M4.3_stabilization_report.md`, screenshots in `docs/screenshots/`).
 - M5.1: a requirement-to-evidence audit, a draft of the final report (with the 300–500-word
   explanation) and a class diagram. No code changed.
+- M5.2-A: **a defend sound** (the instructor asks for sounds for attack, defence, victory and
+  defeat): a successful Defend, or a Knight's Rally, plays it once. The final report
+  (`docs/M5_final_report.md`) has the explanation of the code, class diagrams, test results,
+  screenshots from unmodified matches and, in Appendix B, the complete source code.
 
 You play the LEFT team against a computer opponent (Easy, Normal or Hard), or two people play
 each other on one computer. The design and roadmap are in [docs/M0_design.md](docs/M0_design.md).
@@ -258,9 +262,10 @@ what is drawn and what the text says.
 
 ## Sound and atmosphere (M4.2-A, presentation only)
 - **Sound effects**, made in code by `sound.py` (no sound files, so nothing to license): the
-  cannon firing, the explosion, a block hit, a block destroyed, a level-up, and a tune for a
-  victory, a defeat (against the computer) or a draw. Each plays once, when the game reads the
-  matching Battle event; Defend, Rally, Repair and refused actions are silent. A rematch, new
+  cannon firing, the explosion, a block hit, a block destroyed, a Defend or Rally (a metallic
+  ring, added in M5.2-A), a level-up, and a tune for a victory, a defeat (against the computer)
+  or a draw. Each plays once, when the game reads the matching Battle event; Repair and refused
+  actions are silent. A rematch, new
   teams or quitting stop every sound.
 - **M** turns the sound off and on, on every screen; the combat log heading shows which.
 - **No audio device?** The game is silent and works exactly the same (the mixer is optional).
@@ -369,10 +374,11 @@ python -m unittest discover tests
 | `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules (updated for M5.1) |
 | `docs/M4.2-B_defend_design_review.md` | M4.2-B: the audit of Defend and the redesign that was approved and built (Guarded Strike, anti-stall) |
 | `docs/M4.3_stabilization_report.md` | M4.3: the final stabilization report (test matrix, seeded matches, course-compliance gaps, remaining human checks) |
-| `docs/screenshots/` | Eight representative screenshots of the current game |
-| `docs/M5_final_report_draft.md` | M5.1: draft of the final report, including the separate 300–500-word explanation |
-| `docs/M5_class_diagram.mmd` | M5.1: the class diagram (editable Mermaid source; drawn in the report draft) |
-| `docs/M5.1_submission_audit.md` | M5.1: requirement-to-evidence matrix, screenshot plan, compliance risks, source-code plan, final human checklist |
+| `docs/screenshots/` | Screenshots of the game: 01–08 from scripted runs, 09–14 from complete unmodified matches |
+| `docs/M5_final_report.md` | The final report (M5.2-A): the 300–500-word explanation of the code, gameplay, algorithms, class diagrams, testing, screenshots, AI-assistance draft, and the complete source code (Appendix B) |
+| `docs/M5_class_diagram_main.mmd`, `docs/M5_class_diagram.mmd` | Class diagrams: simplified and complete (editable Mermaid sources) |
+| `docs/figures/` | The two class diagrams, rendered as images for the report |
+| `docs/M5.1_submission_audit.md` | Submission audit (M5.1, revised in M5.2-A with the instructor requirements the PM confirmed): matrix, source-code check, screenshots, risks, final human checklist |
 | `docs/Rebound_reference_review.md` | Review of a reference project (ideas only) |
 
 ## References

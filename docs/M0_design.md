@@ -1,14 +1,15 @@
 # Castle Siege — M0 Requirements and Architecture
 
-Status: **Revision 3 (M2.3), updated for M5.1.** This is the living design document. The game
-is implemented up to M4.3 (Player vs AI, two-player hot seat, the M3.2 balance numbers, the
+Status: **Revision 3 (M2.3), updated for M5.2-A.** This is the living design document. The game
+is implemented up to M5.2-A (Player vs AI, two-player hot seat, the M3.2 balance numbers, the
 M3.3 match flow, the M3.4-A redesign: elimination-only victory and deployable cover, M3.4-B: the
 cover placement screen and a cover-aware computer opponent, M3.4-B.1: Easy's aiming error
 lowered so that its matches finish, M3.4-C: the character-to-cannon animation, M4.1: interface
 and visual polish, cosmetic only, M4.2-A: sound, atmosphere and readability, presentation only,
 M4.2-B: Guarded Strike and the anti-stall rule for Defend, a gameplay change approved after
 `docs/M4.2-B_defend_design_review.md`, and M4.3: the final stabilization, with gameplay
-feature-frozen; see `docs/M4.3_stabilization_report.md`). Revision 3's
+feature-frozen; see `docs/M4.3_stabilization_report.md`; and M5.2-A: the defend sound, an
+instructor-compliance exception, see its block below). Revision 3's
 final decisions and the M3.2 / M3.3 / M3.4 changes, just below, override anything older in this
 document; **where they disagree, the later M3.4 block wins (M3.4-C, then M3.4-B, then M3.4-A).**
 The AI that was built differs from the plan in §6.3; see §14, "M3.1 notes" and "M3.4-B notes".
@@ -16,7 +17,7 @@ The course-compliance checklist is `docs/M3.3_course_compliance.md` (updated for
 
 **Reading guide (added in M5.1).** This document grew with the project, and much of it
 describes earlier designs. The current game is described by the milestone blocks just below
-(M3.4-A to M4.2-B), the README and `docs/M5_final_report_draft.md`. Sections that describe a
+(M3.4-A to M5.2-A), the README and `docs/M5_final_report.md`. Sections that describe a
 superseded design are marked *Historical* where they start. In short, these no longer apply:
 - the M1 prototype: two fixed castles, a cannon on each front tower, the "Classic cannon duel"
   and its castle-destruction victory (removed in M3.4-A);
@@ -239,6 +240,17 @@ screen and the AI redesign are M3.4-B, the run-to-cannon animation M3.4-C.
   reason in the panel and in the HUD when it is clicked.
 - Details are in §14, "M4.2-B notes". Human acceptance is pending.
 
+### M5.2-A — the defend sound (an instructor-compliance exception to the gameplay freeze)
+- **Why:** the instructor's requirements, read by the PM, ask for sounds for attack, defence,
+  victory and defeat; the game had no defence sound.
+- **What:** `sound.py` has a ninth effect, `defend` (a short scrape and a metallic ring, made
+  in code). `Game.play_event_sound` plays it once for a successful basic Defend (`"action"`
+  event) and for a Knight's Rally. A refused action is an `"invalid"` event and stays silent;
+  Repair stays silent. M mutes it and a rematch stops it, as for every sound.
+- **Unchanged:** Defend itself, Guarded Strike, the anti-stall rule, the AI, balance and the
+  interface layout. 411 tests (6 new for the defend sound, one old "Defend is silent" test
+  replaced).
+
 Revision 2's original header: *draft for project-manager review; M0 design only.*
 
 > *Historical: the Revision 2 changes below describe the M0 design (castles, tower cannons, the 60 % rule, simultaneous turns).*
@@ -434,7 +446,7 @@ it guarantees that every match ends, and the AI-vs-AI tests rely on that. It is 
 deviation (§10, C7).
 
 ### 2.4 Explicit gameplay rules (PM item E)
-> *Historical in part: rules 1, 7 and 8 were written for simultaneous turns and castle victory, which no longer exist. Rule 2's Castle Guard is now Cover Guard on the cover blocks, and rule 5's Repair now repairs cover blocks. The current rules: the README ("Rules") and `docs/M5_final_report_draft.md` §4.*
+> *Historical in part: rules 1, 7 and 8 were written for simultaneous turns and castle victory, which no longer exist. Rule 2's Castle Guard is now Cover Guard on the cover blocks, and rule 5's Repair now repairs cover blocks. The current rules: the README ("Rules") and `docs/M5_final_report.md` §3.*
 
 
 | # | Question | Rule | Why |
@@ -742,7 +754,7 @@ load pygame. It runs the import in a fresh `python -c` subprocess and checks
 `"pygame" not in sys.modules`, so other tests that import `main.py` can't spoil the result.
 
 ### 5.2 Classes
-> *Partly historical: `Castle.destruction_percent` and `has_fallen` were removed in M3.4-A; `ActionPlan`, `submit_plan`, the M2 Battle phases and `Team.cannon` / `Team.ai` were never built; `Cannon.fire()` takes no arguments. The current classes and relationships: `docs/M5_class_diagram.mmd` and `docs/M5_final_report_draft.md` §6.*
+> *Partly historical: `Castle.destruction_percent` and `has_fallen` were removed in M3.4-A; `ActionPlan`, `submit_plan`, the M2 Battle phases and `Team.cannon` / `Team.ai` were never built; `Cannon.fire()` takes no arguments. The current classes and relationships: `docs/M5_class_diagram.mmd` and `docs/M5_final_report.md` §5.*
 
 **`castle.py`** (M1)
 | Class | Responsibility |
@@ -1164,7 +1176,11 @@ fallback. M4.2-B (Defend: Guarded Strike and the anti-stall rule) done and accep
 fix). M4.3 (final gameplay stabilization; no rule changed, no defect found) done, awaiting PM
 review: `docs/M4.3_stabilization_report.md`. M4.3 accepted.
 
-**M5 status:** M5.1 (final submission audit and report draft; documentation only, no gameplay change) done, awaiting PM review: `docs/M5.1_submission_audit.md`, `docs/M5_final_report_draft.md`, `docs/M5_class_diagram.mmd`. Next: M5.2, only after PM approval.
+**M5 status:** M5.1 (final submission audit and report draft; documentation only) done and
+accepted. M5.2-A (instructor compliance: the defend sound; the final report
+`docs/M5_final_report.md` with the complete source code; class diagrams; screenshots from
+unmodified matches; the revised audit `docs/M5.1_submission_audit.md`) done, awaiting PM
+review. No further gameplay work without PM approval.
 
 **Updated in M2.3.**
 - **Required:** Player vs AI.

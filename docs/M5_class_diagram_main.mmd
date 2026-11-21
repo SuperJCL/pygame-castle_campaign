@@ -1,0 +1,80 @@
+classDiagram
+    %% Castle Siege - simplified class diagram for the report's OOP section (M5.2-A).
+    %% Drawn from the code; the complete diagram is docs/M5_class_diagram.mmd. Rendered image:
+    %% docs/figures/class_diagram_main.png (Figure 1 of docs/M5_final_report.md, Mermaid 11.4.1).
+    %%   A <|-- B   B inherits from A
+    %%   A *-- B    composition: A creates and owns B
+    %%   A --> B    association: A keeps a reference to B that it does not own
+    %%   A ..> B    dependency: A uses or creates B but does not keep it
+    direction TB
+
+    class Game {
+        +update()
+        +draw()
+        +handle_event(event)
+    }
+    class AIController {
+        +choose(battle) Plan
+        +carry_out(battle, plan)
+    }
+    class Battle {
+        +perform_action(actor_index, action) bool
+        +update()
+        +take_events() list
+        +check_winner() str
+    }
+    class Team {
+        +alive_characters() list
+        +has_lost() bool
+    }
+    class Cannon {
+        -int _angle
+        -int _power
+        +fire() Projectile
+    }
+    class Projectile {
+        +step()
+    }
+    class Castle {
+        +apply_blast(px, py, radius, damage)
+        +repair(pool) int
+    }
+    class Block {
+        -int _hp
+        +take_damage(amount) int
+    }
+    class Character {
+        -int _hp
+        -int _atk
+        -int _defense
+        -int _level
+        -int _exp
+        +take_hit(attacker, multiplier, ignores_def) int
+        +gain_exp(amount) int
+        +use_special(team)
+    }
+    class Knight {
+        +use_special(team)
+    }
+    class Archer {
+        +use_special(team)
+    }
+    class Engineer {
+        +use_special(team)
+    }
+
+    Character <|-- Knight
+    Character <|-- Archer
+    Character <|-- Engineer
+
+    Game "1" *-- "0..1" Battle : battle
+    Game "1" *-- "0..1" AIController : ai
+    AIController ..> Battle : choose() and carry_out()
+    Battle "1" *-- "2" Team : teams
+    Battle "1" *-- "2" Castle : castles
+    Battle "1" *-- "2" Cannon : cannons
+    Battle "1" --> "0..1" Projectile : projectile
+    Team "1" *-- "1..3" Character : characters
+    Team "1" --> "1" Castle : castle
+    Castle "1" *-- "0..6" Block : blocks
+    Cannon ..> Projectile : fire() creates

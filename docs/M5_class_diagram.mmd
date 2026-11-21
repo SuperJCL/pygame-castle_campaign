@@ -1,7 +1,8 @@
 classDiagram
-    %% Castle Siege - class diagram (M5.1), drawn from the code at commit f09ac80.
-    %% Editable Mermaid source. GitHub draws it inside docs/M5_final_report_draft.md
-    %% (section 6); the block there is an exact copy of this file.
+    %% Castle Siege - complete class diagram (M5.1; layout order adjusted in M5.2-A), drawn from
+    %% the code. Editable Mermaid source of docs/figures/class_diagram_full.png (Appendix A of
+    %% docs/M5_final_report.md), rendered with Mermaid 11.4.1 in a browser. The M5.2-A defend
+    %% sound added no class or relationship. Simplified version: docs/M5_class_diagram_main.mmd.
     %%
     %% Arrows:
     %%   A <|-- B   B inherits from A (B is a kind of A)
@@ -230,9 +231,9 @@ classDiagram
     Game "1" *-- "1" CoverSetup : setup
     Game "1" *-- "many" Button : buttons
     Game "1" *-- "1" SoundBoard : sounds
-    Game "1" *-- "1" CannonRun : cannon_run
-    Game "1" *-- "0..1" Battle : battle
     Game "1" *-- "0..1" AIController : ai
+    Game "1" *-- "0..1" Battle : battle
+    Game "1" *-- "1" CannonRun : cannon_run
     CannonRun "1" --> "0..1" PendingShot : shot
     PendingShot "1" --> "0..1" Plan : plan
 

@@ -24,6 +24,12 @@ the character first runs to its team's cannon (animation.py), the shot is fired 
 Battle.perform_action() when it gets there, and it runs back while the shot flies. Combat
 input and the computer wait until it is back. Defend, Rally and Repair still happen at once.
 
+Reflex Aim (M6.1, an experimental prototype, reflex_aim.py): chosen with "Aim" on the selection
+screen (Classic is the default and works exactly as before). In Reflex Aim the active person's
+barrel swings between 20 and 75 degrees by itself, and ATTACK or SPACE locks the angle shown at
+that moment; power is still set with the arrow keys. The swing stops while the controls are
+locked. The computer opponent keeps its own aim search and never swings.
+
 Sound (M4.2-A, sound.py): effects made in code play for Battle events (a shot, an explosion,
 cover hit or destroyed, a Defend or Rally (M5.2-A), a level-up, the result). M turns the sound off and on; without an audio
 device the game is silent and works the same.
@@ -51,6 +57,7 @@ from drawing import (ACTIVE_RING_COLOR, AIM_COLOR, BUTTON_OFF, CANNON_COLOR, CLO
 from drawing import EMBLEM_COLOR, EMBLEM_Y, draw_badge, draw_emblem, draw_plate, make_background   # M4.2-A
 from drawing import EXPIRED_COLOR, GUARD_STRIKE_COLOR, draw_guard_mark   # M4.2-B
 from sound import BUFFER, SAMPLE_RATE, SoundBoard
+from reflex_aim import SWING_HIGH, SWING_LOW, AimSwing   # M6.1 (experimental)
 
 WINDOW_WIDTH = FIELD_WIDTH        # 1280
 WINDOW_HEIGHT = 720
@@ -64,6 +71,9 @@ LOG_LINES = 6                     # combat-log lines shown at once
 PANEL_TOP = 580                   # the control panel fills the bottom of the window
 COVER_HELP_TOP = 122              # the placement screen's instructions start at this y ...
 COVER_HELP_STEP = 26              # ... one line every 26 px
+AIM_MODES = ("classic", "reflex")  # M6.1: how a person aims (Reflex Aim is experimental)
+SWING_MARK_RADIUS = 46            # Reflex Aim: dots this far from the pivot show the swing's range ...
+SWING_MARK_STEP = 5               # ... one every 5 degrees
 
 
 # ----- small helpers -------------------------------------------------------------
@@ -159,9 +169,15 @@ class TeamSelection:
         self.difficulty = "normal"
         self.team_size = 1
         self.picks = {"left": [], "right": []}
+        self.aim_mode = "classic"       # M6.1: "classic" (arrow keys) or "reflex" (the barrel swings)
 
     def set_mode(self, vs_ai):
         self.vs_ai = vs_ai
+
+    def set_aim_mode(self, aim_mode):
+        if aim_mode not in AIM_MODES:
+            raise ValueError(f"the aim mode must be one of {AIM_MODES}, not {aim_mode!r}")
+        self.aim_mode = aim_mode
 
     def set_team_size(self, size):
         if not 1 <= size <= MAX_TEAM_SIZE:
@@ -258,6 +274,8 @@ class Game:
         self.ai = None                # the AIController playing RIGHT, or None (two players)
         self.ai_wait = 0              # frames the computer has waited on this turn
         self.cannon_run = CannonRun()  # an attacking character's run to the cannon and back (M3.4-C)
+        self.aim_mode = "classic"      # M6.1: the Aim mode of the current match (from the selection)
+        self.swings = {"left": AimSwing(), "right": AimSwing()}   # Reflex Aim: each cannon's swing
         self.sounds = SoundBoard()     # sound effects (M4.2-A); silent if there is no audio device
         self.standing_blocks = {}      # standing blocks per side, to hear when one is destroyed
         self.selected = {"left": 0, "right": 0}   # slot of the character chosen to act
@@ -278,6 +296,8 @@ class Game:
                                    for i, level in enumerate(DIFFICULTY_SETTINGS)}
         self.size_buttons = [Button(470 + i * 120, 120, 105, 40, f"{n} v {n}")
                              for i, n in enumerate(range(1, MAX_TEAM_SIZE + 1))]
+        self.aim_buttons = {"classic": Button(910, 120, 100, 40, "Classic"),    # M6.1
+                            "reflex": Button(1020, 120, 100, 40, "Reflex")}
         self.card_rects = {}
         for side, first_x in (("left", 60), ("right", 660)):
             for i, role in enumerate(ARCHETYPES):
@@ -302,6 +322,7 @@ class Game:
         """Start a match. `ai` is the AIController playing RIGHT, or None if two people play."""
         self.battle = Battle(roster=roster, layouts=layouts)
         self.ai = ai
+        self.aim_mode = self.selection.aim_mode        # kept for every rematch with these teams
         self.begin_match()
         if ai is not None:
             self.log.append(f"AI ({ai.difficulty.capitalize()}) placed {len(layouts['right'])} cover blocks.")
@@ -325,10 +346,17 @@ class Game:
         self.explosions = []
         self.floaters = []
         self.trail = []
+        for side, swing in self.swings.items():       # Reflex Aim: every swing starts again at its
+            swing.reset()                             # low limit, and each person's barrel with it
+            if self.aim_mode == "reflex" and self.is_human_side(side):
+                cannon = self.battle.cannons[side]
+                aim_cannon(cannon, swing.angle(), cannon.power)
         first = f"{self.battle.first_side.upper()} team moves first."
         self.log = ["--- Round 1 ---", first]
         if self.ai is not None and self.battle.first_side == self.ai.side:
             self.message = f"The computer ({self.ai.side.upper()}) moves first."   # nothing to do yet
+        elif self.aim_mode == "reflex":
+            self.message = first + " Choose a character, then time your shot: ATTACK or SPACE locks the angle."
         else:
             self.message = first + " Choose a character, aim, then choose an action."
         self.refresh_buttons()
@@ -388,6 +416,22 @@ class Game:
         return (self.state == "battle" and self.ai is not None
                 and self.battle.active_side == self.ai.side and self.battle.can_fire())
 
+    def is_human_side(self, side):
+        """True if a person plays `side` (both sides in two-player mode)."""
+        return self.ai is None or side != self.ai.side
+
+    def aim_swings(self):
+        """Reflex Aim (M6.1): True while the active person's barrel swings, i.e. while that person
+        may act. It stops whenever the controls are locked, so the computer's never swings."""
+        return self.aim_mode == "reflex" and not self.controls_locked()
+
+    def swing_aim(self):
+        """One frame of Reflex Aim: the active team's swing moves on and its cannon turns with it."""
+        side = self.battle.active_side
+        swing, cannon = self.swings[side], self.battle.cannons[side]
+        swing.step()
+        aim_cannon(cannon, swing.angle(), cannon.power)
+
     def controls_locked(self):
         """True while nobody may aim or act in the battle: a character is running to or from
         the cannon (M3.4-C), a shot is flying, the game is over, or it is the computer's turn."""
@@ -440,6 +484,10 @@ class Game:
         if fires_the_cannon(self.battle.teams[side].characters[index], action):
             cannon = self.battle.cannons[side]
             self.start_cannon_run(PendingShot(side, index, action, cannon.angle, cannon.power))
+            if self.aim_mode == "reflex":        # the angle shown now is the one that will be fired
+                self.message += f" Angle locked at {cannon.angle}°."
+                self.log = (self.log + [f"{side.upper()} locked the angle at {cannon.angle}° "
+                                        f"(power {cannon.power})."])[-50:]
         else:
             self.battle.perform_action(index, action)
 
@@ -524,7 +572,9 @@ class Game:
         """Keys during a turn: aim, choose a character (1-3) and SPACE to attack."""
         step = 5 if mods & pygame.KMOD_SHIFT else 1
         cannon = self.battle.cannons[self.battle.active_side]
-        if key == pygame.K_UP:
+        if key in (pygame.K_UP, pygame.K_DOWN) and self.aim_mode == "reflex":
+            self.message = "Reflex Aim: the angle swings by itself. Press ATTACK or SPACE to lock it."
+        elif key == pygame.K_UP:
             cannon.adjust_angle(step)
         elif key == pygame.K_DOWN:
             cannon.adjust_angle(-step)
@@ -572,6 +622,12 @@ class Game:
             if button.is_clicked(pos):
                 self.selection.set_team_size(size)
                 self.message = f"{size} v {size}: each team picks {size} different character(s)."
+        for aim_mode, button in self.aim_buttons.items():
+            if button.is_clicked(pos):
+                self.selection.set_aim_mode(aim_mode)
+                self.message = (f"Reflex Aim: the barrel swings between {SWING_LOW}° and {SWING_HIGH}°; "
+                                "ATTACK or SPACE locks the angle. The arrow keys set the power."
+                                if aim_mode == "reflex" else "Classic Aim: the arrow keys set the angle and the power.")
         for (side, role), rect in self.card_rects.items():
             if rect.collidepoint(pos):
                 refusal = self.selection.toggle(side, role)
@@ -616,6 +672,8 @@ class Game:
             button.enabled = self.selection.vs_ai
         for size, button in enumerate(self.size_buttons, start=1):
             button.chosen = (size == self.selection.team_size)
+        for aim_mode, button in self.aim_buttons.items():
+            button.chosen = (aim_mode == self.selection.aim_mode)
         self.start_button.enabled = self.selection.is_complete()
         if self.battle is not None:
             index = self.selected_index()
@@ -630,6 +688,8 @@ class Game:
             self.update_cannon_run()      # the controls and the computer wait for it
         elif self.is_ai_turn():
             self.update_ai()
+        elif self.aim_swings():
+            self.swing_aim()              # Reflex Aim (M6.1): only while a person may act
         if self.battle is not None and self.state in ("battle", "result"):
             self.battle.update()
             for event in self.battle.take_events():
@@ -812,6 +872,11 @@ class Game:
             lines.append("DEFEND unavailable: your team defended last turn.")
         elif character.guarded_strike_ready:
             lines.append("ATTACK (or SPACE) uses Guarded Strike: +25% ATK.")
+        elif self.aim_mode == "reflex":          # M6.1
+            if isinstance(character, Archer):    # (the panel is only 390 px wide)
+                lines.append("ATTACK, SPACE, Power Shot: lock the angle. Arrows: power.")
+            else:
+                lines.append("ATTACK or SPACE locks the swinging angle. Arrows: power.")
         elif isinstance(character, Archer):
             lines.append("ATTACK, SPACE and Power Shot use this aim. Arrows aim.")
         else:
@@ -840,7 +905,7 @@ class Game:
             return "running to the cannon" if self.cannon_run.state == RUN_TO_CANNON else "running back"
         if self.is_ai_turn():
             return "thinking..."
-        return "aim and act"
+        return "time your shot" if self.aim_mode == "reflex" else "aim and act"
 
     def hud_turn_text(self):
         """The turn banner: the round, whose turn it is (and who plays it) and the phase."""
@@ -923,6 +988,9 @@ class Game:
         draw_text(self.screen, "Team size:", self.font, TEXT_COLOR, midright=(455, 140))
         for button in self.size_buttons:
             button.draw(self.screen, self.font)
+        draw_text(self.screen, "Aim:", self.font, TEXT_COLOR, midright=(900, 140))    # M6.1
+        for button in self.aim_buttons.values():
+            button.draw(self.screen, self.font)
         size = self.selection.team_size
         draw_text(self.screen, f"LEFT TEAM   {len(self.selection.picks['left'])}/{size} chosen"
                   + ("   (you)" if self.selection.vs_ai else ""),
@@ -942,6 +1010,9 @@ class Game:
         draw_text(self.screen, "Win by defeating every enemy character. Cover blocks only protect: "
                   "destroying them does not win.", self.small_font, TEXT_COLOR,
                   center=(WINDOW_WIDTH // 2, 630))
+        draw_text(self.screen, "Aim: Classic = Up/Down set the angle.  Reflex (experimental) = the barrel "
+                  "swings by itself; ATTACK or SPACE locks it.", self.small_font, TEXT_COLOR,
+                  center=(WINDOW_WIDTH // 2, 660))
 
     def draw_card(self, side, role, rect):
         """One character card on the selection screen, with its stats."""
@@ -1130,6 +1201,8 @@ class Game:
             self.draw_muzzle_flash(self.battle.cannons[self.cannon_run.shot.side])
         if self.battle.can_fire():
             cannon = self.battle.cannons[self.battle.active_side]
+            if self.aim_mode == "reflex" and self.is_human_side(self.battle.active_side):
+                self.draw_swing_marks(cannon, self.swings[self.battle.active_side])
             self.draw_aim_arrow(cannon)
             draw_text(self.screen, self.cannon_label(cannon), self.tiny_font, READY_COLOR,
                       center=(cannon.x, GROUND_Y + 10))
@@ -1270,6 +1343,16 @@ class Game:
         pygame.draw.circle(self.screen, CANNON_COLOR, (cannon.x, cannon.y), 9)
         if is_active:
             pygame.draw.circle(self.screen, ACTIVE_RING_COLOR, (cannon.x, cannon.y), 14, 3)
+
+    def draw_swing_marks(self, cannon, swing):
+        """Reflex Aim: small dots around the pivot from the swing's low limit to its high limit (the
+        two limits a little bigger), so the player can see where the barrel will turn round."""
+        angles = list(range(swing.low, swing.high, SWING_MARK_STEP)) + [swing.high]
+        for angle in angles:
+            radians = math.radians(angle)
+            centre = (round(cannon.x + direction(cannon.side) * SWING_MARK_RADIUS * math.cos(radians)),
+                      round(cannon.y - SWING_MARK_RADIUS * math.sin(radians)))
+            pygame.draw.circle(self.screen, AIM_COLOR, centre, 3 if angle in (swing.low, swing.high) else 2)
 
     def draw_aim_arrow(self, cannon):
         """An arrow in the aiming direction; a longer arrow means more power."""

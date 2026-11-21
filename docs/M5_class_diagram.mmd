@@ -1,0 +1,252 @@
+classDiagram
+    %% Castle Siege - class diagram (M5.1), drawn from the code at commit f09ac80.
+    %% Editable Mermaid source. GitHub draws it inside docs/M5_final_report_draft.md
+    %% (section 6); the block there is an exact copy of this file.
+    %%
+    %% Arrows:
+    %%   A <|-- B   B inherits from A (B is a kind of A)
+    %%   A *-- B    composition: A creates and owns B (B is part of A)
+    %%   A --> B    association: A keeps a reference to B that it does not own
+    %%   A ..> B    dependency: A uses or creates B but does not keep it
+    %% Visibility: + public, - private by convention (a leading underscore in Python).
+    %% Only the most important attributes and methods are listed.
+    direction TB
+
+    class Game {
+        +str state
+        +Battle battle
+        +AIController ai
+        +TeamSelection selection
+        +CoverSetup setup
+        +CannonRun cannon_run
+        +SoundBoard sounds
+        +list log
+        +handle_event(event)
+        +update()
+        +draw()
+        +do_action(action)
+        +update_ai()
+        +start_cannon_run(shot)
+        +fire_pending_shot(shot)
+        +show_event(event)
+        +rematch()
+    }
+    class TeamSelection {
+        +bool vs_ai
+        +str difficulty
+        +int team_size
+        +dict picks
+        +toggle(side, role) str
+        +is_complete() bool
+        +roster() dict
+    }
+    class CoverSetup {
+        +dict layouts
+        +click_slot(side, slot) str
+    }
+    class Button {
+        +Rect rect
+        +str label
+        +bool enabled
+        +bool chosen
+        +is_clicked(pos) bool
+        +draw(screen, font)
+    }
+    class SoundBoard {
+        +dict sounds
+        +bool muted
+        +bool available
+        +play(name)
+        +stop()
+        +toggle_mute()
+    }
+    class CannonRun {
+        +str state
+        +int frame
+        +PendingShot shot
+        +start(shot, slot_x)
+        +step() bool
+        +cancel()
+        +is_busy() bool
+        +actor_x() float
+    }
+    class PendingShot {
+        +str side
+        +int actor_index
+        +str action
+        +int angle
+        +int power
+        +Plan plan
+    }
+    class AIController {
+        +str side
+        +str difficulty
+        +dict settings
+        +Random rng
+        +bool defended_last_turn
+        +pick_team(size) list
+        +choose_layout() tuple
+        +choose(battle) Plan
+        +carry_out(battle, plan) Plan
+        +take_turn(battle) Plan
+        +wants_to_defend(team) bool
+        +attack_plan(battle, use_specials) Plan
+        +defensive_plan(battle, use_specials) Plan
+        +safety_plan(battle) Plan
+    }
+    class Plan {
+        +int actor_index
+        +str action
+        +int angle
+        +int power
+        +float score
+        +str reason
+        +bool defensive
+        +str goal
+        +fires_a_shot() bool
+    }
+    class Battle {
+        +dict teams
+        +dict castles
+        +dict cannons
+        +Projectile projectile
+        +str active_side
+        +str first_side
+        +int round_number
+        +str winner
+        +str end_reason
+        -list _events
+        -dict _defended_last_turn
+        +perform_action(actor_index, action) bool
+        +why_not_allowed(actor_index, action) str
+        +update()
+        +take_events() list
+        +check_winner() str
+        +path_contacts(side, angle, power) list
+        +reset(first_side)
+        -_end_shot(impact)
+        -_finish_turn(actor, exp)
+        -_start_round()
+        -_start_turn(side)
+    }
+    class Team {
+        +str side
+        +tuple characters
+        +Castle castle
+        +alive_characters() list
+        +has_lost() bool
+        +character_rect(index) tuple
+        +characters_near(px, py, radius) list
+        +is_covered(index, px, py) bool
+    }
+    class Cannon {
+        +str side
+        +int x
+        +int y
+        -int _angle
+        -int _power
+        +adjust_angle(change)
+        +adjust_power(change)
+        +fire() Projectile
+    }
+    class Projectile {
+        +float x
+        +float y
+        +float vx
+        +float vy
+        +str side
+        +int steps
+        +step()
+    }
+    class Castle {
+        +str side
+        +tuple layout
+        +int max_hp
+        -list _blocks
+        +alive_blocks() list
+        +apply_blast(px, py, radius, damage) tuple
+        +is_damaged() bool
+        +repair(pool) int
+        +total_hp() int
+    }
+    class Block {
+        +int x
+        +int y
+        +int size
+        +int max_hp
+        -int _hp
+        +take_damage(amount) int
+        +restore(amount) int
+        +is_destroyed() bool
+        +rect() tuple
+    }
+    class Character {
+        +str name
+        +str side
+        -int _hp
+        -int _max_hp
+        -int _atk
+        -int _defense
+        -int _level
+        -int _exp
+        -bool _is_defending
+        -int _special_cooldown
+        -str _guarded_strike
+        +is_alive() bool
+        +take_hit(attacker, multiplier, ignores_def) int
+        +attack_shot() ShotDamage
+        +defend()
+        +start_cooldown()
+        +tick_cooldown()
+        +special_blocked_reason(team) str
+        +use_special(team) tuple
+        +gain_exp(amount) int
+        -_level_up()
+    }
+    class Knight {
+        +use_special(team) tuple
+    }
+    class Archer {
+        +use_special(team) tuple
+    }
+    class Engineer {
+        +int REPAIR_POOL
+        +special_blocked_reason(team) str
+        +use_special(team) tuple
+    }
+    class ShotDamage {
+        +int block_damage
+        +float multiplier
+        +bool ignores_def
+    }
+
+    %% Inheritance (the only inheritance in the project)
+    Character <|-- Knight
+    Character <|-- Archer
+    Character <|-- Engineer
+
+    %% The interface (main.py, drawing.py, sound.py, animation.py)
+    Game "1" *-- "1" TeamSelection : selection
+    Game "1" *-- "1" CoverSetup : setup
+    Game "1" *-- "many" Button : buttons
+    Game "1" *-- "1" SoundBoard : sounds
+    Game "1" *-- "1" CannonRun : cannon_run
+    Game "1" *-- "0..1" Battle : battle
+    Game "1" *-- "0..1" AIController : ai
+    CannonRun "1" --> "0..1" PendingShot : shot
+    PendingShot "1" --> "0..1" Plan : plan
+
+    %% The computer opponent (ai.py)
+    AIController ..> Battle : choose() and carry_out() receive it
+    AIController ..> Plan : creates
+
+    %% The rules (battle.py, castle.py, characters.py)
+    Battle "1" *-- "2" Team : teams
+    Battle "1" *-- "2" Castle : castles
+    Battle "1" *-- "2" Cannon : cannons
+    Battle "1" --> "0..1" Projectile : projectile in flight
+    Team "1" *-- "1..3" Character : characters
+    Team "1" --> "1" Castle : castle
+    Castle "1" *-- "0..6" Block : _blocks
+    Cannon ..> Projectile : fire() creates
+    Character ..> ShotDamage : attack_shot() and use_special() return

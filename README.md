@@ -6,7 +6,7 @@ stands behind its own cover blocks and shares one cannon standing in front of th
 teams take turns: pick a character, aim the cannon, and Attack, Defend or use a Special ability.
 **You win by defeating every enemy character.**
 
-**Current status: Milestone 4.3 — final gameplay stabilization (gameplay feature-frozen).**
+**Current status: Milestone 5.1 — final submission audit and report draft (documentation only; gameplay feature-frozen since M4.3).**
 - Only elimination wins. Castle destruction is not a victory condition.
 - Before each battle, every team places its own cover: up to 6 blocks on 8 fixed slots. Against
   the computer you place the LEFT cover and the computer places its own.
@@ -28,6 +28,8 @@ teams take turns: pick a character, aim the cannon, and Attack, Defend or use a 
 - M4.3: a full regression of every mode, size, cover type and first mover through the real
   interface; no gameplay defect was found and no rule changed
   (`docs/M4.3_stabilization_report.md`, screenshots in `docs/screenshots/`).
+- M5.1: a requirement-to-evidence audit, a draft of the final report (with the 300–500-word
+  explanation) and a class diagram. No code changed.
 
 You play the LEFT team against a computer opponent (Easy, Normal or Hard), or two people play
 each other on one computer. The design and roadmap are in [docs/M0_design.md](docs/M0_design.md).
@@ -360,14 +362,17 @@ python -m unittest discover tests
 | `castle.py` | `Block`, the 8 cover slots, the layout rules (`layout_problem`) and the placement clicks (`place_block`, `remove_block`), and `Castle` (one team's cover): damage and repair |
 | `characters.py` | `Character` base class with `Knight`, `Archer`, `Engineer`: HP/ATK/DEF, damage, defend, cooldowns, EXP, levels and each role's special ability |
 | `tests/` | `unittest` tests for `castle.py`, `battle.py` (physics and collision), team combat and cover (`test_combat.py`), `characters.py`, `ai.py`, `animation.py`, `sound.py` and `main.py` |
-| `docs/M0_design.md` | Design: rules, architecture, roadmap (the latest decisions at the top) |
+| `docs/M0_design.md` | Design: rules, architecture, roadmap (the latest decisions at the top; superseded sections are marked *Historical*) |
 | `docs/M3.1_balance_analysis.md` | M3.1 analysis of Defend and Repair (recommendations only, nothing changed) |
 | `docs/M3.2_balance_report.md` | M3.2 balance experiment under the old castle rules (historical; its script is in commit `86b90fa`) |
 | `docs/M3.2_benchmark_results.md`, `docs/M3.2_benchmark_results_easy.md` | That benchmark's generated result tables (historical) |
-| `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules (updated for M4.3) |
+| `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules (updated for M5.1) |
 | `docs/M4.2-B_defend_design_review.md` | M4.2-B: the audit of Defend and the redesign that was approved and built (Guarded Strike, anti-stall) |
 | `docs/M4.3_stabilization_report.md` | M4.3: the final stabilization report (test matrix, seeded matches, course-compliance gaps, remaining human checks) |
 | `docs/screenshots/` | Eight representative screenshots of the current game |
+| `docs/M5_final_report_draft.md` | M5.1: draft of the final report, including the separate 300–500-word explanation |
+| `docs/M5_class_diagram.mmd` | M5.1: the class diagram (editable Mermaid source; drawn in the report draft) |
+| `docs/M5.1_submission_audit.md` | M5.1: requirement-to-evidence matrix, screenshot plan, compliance risks, source-code plan, final human checklist |
 | `docs/Rebound_reference_review.md` | Review of a reference project (ideas only) |
 
 ## References

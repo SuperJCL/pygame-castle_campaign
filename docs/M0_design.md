@@ -1,6 +1,6 @@
 # Castle Siege — M0 Requirements and Architecture
 
-Status: **Revision 3 (M2.3), updated for M4.3.** This is the living design document. The game
+Status: **Revision 3 (M2.3), updated for M5.1.** This is the living design document. The game
 is implemented up to M4.3 (Player vs AI, two-player hot seat, the M3.2 balance numbers, the
 M3.3 match flow, the M3.4-A redesign: elimination-only victory and deployable cover, M3.4-B: the
 cover placement screen and a cover-aware computer opponent, M3.4-B.1: Easy's aiming error
@@ -12,7 +12,21 @@ feature-frozen; see `docs/M4.3_stabilization_report.md`). Revision 3's
 final decisions and the M3.2 / M3.3 / M3.4 changes, just below, override anything older in this
 document; **where they disagree, the later M3.4 block wins (M3.4-C, then M3.4-B, then M3.4-A).**
 The AI that was built differs from the plan in §6.3; see §14, "M3.1 notes" and "M3.4-B notes".
-The course-compliance checklist is `docs/M3.3_course_compliance.md` (updated for M4.3).
+The course-compliance checklist is `docs/M3.3_course_compliance.md` (updated for M5.1).
+
+**Reading guide (added in M5.1).** This document grew with the project, and much of it
+describes earlier designs. The current game is described by the milestone blocks just below
+(M3.4-A to M4.2-B), the README and `docs/M5_final_report_draft.md`. Sections that describe a
+superseded design are marked *Historical* where they start. In short, these no longer apply:
+- the M1 prototype: two fixed castles, a cannon on each front tower, the "Classic cannon duel"
+  and its castle-destruction victory (removed in M3.4-A);
+- the 60 % castle-destruction loss and the `castle_loss_enabled` switch (removed in M3.4-A);
+- simultaneous turns, hidden plans, `ActionPlan` / `submit_plan`, `TURN_MODE` and the HANDOVER
+  screen (cancelled in M2.3, never built);
+- the round-30 tie-breakers (built in M3.3, removed in M3.4-A);
+- the original AI plan in §6.3 (the AI built in M3.1 and M3.4-B works differently).
+
+The process log (§14) is a dated record and is kept as it was written.
 
 ### Revision 3 — final decisions (made by the PM and the user in M2.3)
 - **Alternating turns are the final design. Simultaneous turns are cancelled.** The left team
@@ -34,6 +48,8 @@ The course-compliance checklist is `docs/M3.3_course_compliance.md` (updated for
   `castle_loss_enabled` are gone.*
 
 ### M3.2 — rule changes (chosen with the balance benchmark; see docs/M3.2_balance_report.md)
+> *Historical in part: the castle rules (the 60 % threshold, Castle Guard on castle blocks) were replaced in M3.4-A. Castle Guard continues as Cover Guard on the cover blocks; Repair 150 is unchanged.*
+
 - **Castle Guard:** while one of a team's characters is defending (Defend or Rally), enemy shots
   do half damage to that team's castle blocks, rounded down (50 → 25, 60 → 30, 75 → 37). It ends
   with the Defend, at the team's next turn (`battle.CASTLE_GUARD_PERCENT = 50`).
@@ -44,6 +60,8 @@ The course-compliance checklist is `docs/M3.3_course_compliance.md` (updated for
 - Human play-testing of these rules is still pending.
 
 ### M3.3 — final game rules and flow
+> *Historical in part: the castle win and the round-limit tie-breakers were removed in M3.4-A (a match that reaches the end of round 30 is now a draw). The round limit, the first-mover alternation and the result screen remain.*
+
 - **Round limit (our design rule, not an instructor number):** a team match ends after
   `ROUND_LIMIT = 30` complete rounds (both teams have acted, whichever side started). Ordinary
   elimination and castle wins are checked first, even on the last turn. Then the tie-breakers
@@ -223,6 +241,9 @@ screen and the AI redesign are M3.4-B, the run-to-cannon animation M3.4-C.
 
 Revision 2's original header: *draft for project-manager review; M0 design only.*
 
+> *Historical: the Revision 2 changes below describe the M0 design (castles, tower cannons, the 60 % rule, simultaneous turns).*
+
+
 Revision 2 updates Revision 1 (commit `2b865e8`). It follows PM feedback and a technical review
 of the Rebound reference project (`docs/Rebound_reference_review.md`). The core concept is
 unchanged. What changed:
@@ -251,6 +272,8 @@ so it can be changed without touching logic.
 ## 1. Game design (concise)
 
 ### 1.1 Pitch
+> *Historical (superseded in M3.4-A): the two fixed castles and the cannon on each front tower are gone. Each team now places its own cover blocks, and its cannon stands on the ground in front of them (see the M3.4-A block above).*
+
 A 2D side-view artillery game. Two castles face each other across an open field. Each castle
 has **one cannon** on top of its front tower. Behind each castle stand 1–3 characters (Knight,
 Archer, Engineer). The teams take turns: the left team, then the right team. On its turn a team
@@ -262,6 +285,8 @@ The acting character *operates* its team's cannon: the character's stats decide 
 The cannon itself is scenery. It cannot be damaged.
 
 ### 1.2 How you win
+> *Historical (superseded in M3.4-A): the 60 % castle-destruction loss below was removed. The only way to win is to defeat every enemy character; a match that reaches the end of round 30 is a draw.*
+
 A team **loses** at the end of a round if either:
 - its castle is **≥ 60 % destroyed**, or
 - **all** of its characters are defeated (HP 0).
@@ -273,6 +298,8 @@ happen during play, because only one team acts at a time.
   specification (§10: C2, C7). Elimination-only victory is a switch (`castle_loss_enabled`).
 
 ### 1.3 Modes, by milestone
+> *Historical in part: the M1 prototype (the "Classic cannon duel") was removed in M3.4-A; Player vs AI was built in M3.1.*
+
 - **M1 prototype:** one keyboard controls both cannons, and shots alternate left, right, left…
   No characters. It is still available as the "Classic cannon duel" button.
 - **M2.3 (built):** local two-player hot seat with full combat rules. Two people share the mouse
@@ -281,6 +308,8 @@ happen during play, because only one team acts at a time.
 - **M3:** Player vs AI (Easy / Normal / Hard), the required final mode, next to the hot-seat mode.
 
 ### 1.4 The battlefield (1280 × 720 window, 60 FPS)
+> *Historical (superseded in M3.4-A): the castles, the cannon pivots (360, 390) / (920, 390) and the HUD shown here are the M1 layout. Today: cover slots at x 172–300 and 980–1108, cannon pivots (340, 544) and (940, 544), characters at x 140 / 95 / 50 and 1140 / 1185 / 1230, and the control panel from y 580.*
+
 ```
 y=0    +--------------------------------------------------------------------------+
        | Round 4      LEFT CASTLE 23% destroyed       RIGHT CASTLE 41% destroyed  |  HUD
@@ -308,6 +337,8 @@ y=720  +------------------------------------------------------------------------
   so lobbed shots can land on the characters.
 
 ### 1.5 Aiming
+> *Historical in part: the ranges and controls below are current, but the shot windows and the landing point of the default shot were measured from the M1 tower cannons and the old castles.*
+
 - Angle 5°–80°, measured up from horizontal, always toward the enemy. Default 45°.
 - Power 10–100. Default **50**. The default shot lands at x ≈ 785, about 100 px short of the
   enemy castle (x = 888), so the player always has to adjust.
@@ -364,6 +395,8 @@ M3.4-B: "select" ──► "cover" (LEFT) ──► "cover" (RIGHT, two players 
 | **ROUND_END** | Award EXP to each actor that is still alive, and process level-ups. Check loss conditions for **both** teams at once: neither lost → ROUND_START; one lost → the other wins; both lost → Draw; round 30 finished → tie-break (§4.7). |
 
 ### 2.3 Alternating turns (the final design, built in M2.2) and elimination-only victory
+> *Historical in part: the alternating turns described here are built (without the `TURN_MODE` switch). The `CASTLE_LOSS_ENABLED` switch and the castle victory were removed in M3.4-A: elimination is the only victory.*
+
 **Alternating turns.** Since M2.3 this is the only mode. There is no `TURN_MODE` switch: the
 battle simply alternates. The rules below are implemented as written, except for the
 `TURN_MODE` and `turn_mode` references, which were never built. Originally this was specified
@@ -401,6 +434,8 @@ it guarantees that every match ends, and the AI-vs-AI tests rely on that. It is 
 deviation (§10, C7).
 
 ### 2.4 Explicit gameplay rules (PM item E)
+> *Historical in part: rules 1, 7 and 8 were written for simultaneous turns and castle victory, which no longer exist. Rule 2's Castle Guard is now Cover Guard on the cover blocks, and rule 5's Repair now repairs cover blocks. The current rules: the README ("Rules") and `docs/M5_final_report_draft.md` §4.*
+
 
 | # | Question | Rule | Why |
 |---|---|---|---|
@@ -467,6 +502,8 @@ A special used in round *r* can be used again in round *r + cooldown*. Every spe
 ready. Details and an example: §2.4 rule 6 and §2.5.
 
 ### 3.4 Engineer Repair (rebalanced)
+> *Historical in part: the pool (150), the order (most damaged first) and the limits are current, but they now apply to the team's cover blocks (at most 6 blocks, 600 HP), not to a 1500 HP castle. The percentages and the "60 % line" below refer to the removed castle rules.*
+
 **Rule:** Repair restores **at most 150 HP in total** (10 % of the castle's 1500 HP; it was 75
 until M3.2). The HP goes to damaged blocks that are still standing, **most damaged first** (ties:
 leftmost, then top first). No block goes above 100 HP. Destroyed blocks stay destroyed. Any HP
@@ -553,6 +590,8 @@ Examples (Level 1):
   never reduced castle damage.
 
 ### 4.3 Damage to castle blocks (one explosion)
+> *Historical in part: the per-block values are current (now for cover blocks); the M1 cannon duel row went with the duel in M3.4-A.*
+
 Each shot deals a fixed amount to every enemy block in the blast (since M2.2; it no longer
 depends on ATK or level):
 
@@ -571,6 +610,8 @@ BLOCK_DAMAGE_MULT)`, which gave a Knight 30 per block. That brought back the slo
 M1.1 fixed, so M2.2 replaced it with these values.)
 
 ### 4.4 Explosions (one rule for everything)
+> *Partly superseded: since M3.4-A a standing block between the explosion and a character shields that character, and collision is checked along the whole path of each step. The block counts at the end refer to the old castle.*
+
 When a projectile enters an enemy character's rectangle or an enemy block's rectangle, or reaches
 the ground, it **explodes** at that point. At the impact point:
 - every **enemy** character whose centre is within **50 px** takes character damage (§4.1);
@@ -584,6 +625,8 @@ of the screen (y < 0) and come back down.
 On an intact castle, a hit damages **2–6 blocks, usually 3–4** (77 % of hits; mean 3.7; §14).
 
 ### 4.5 Castle and destruction
+> *Historical (superseded in M3.4-A): the fixed castle template, the destruction percentage and the 60 % loss below were removed. Today each team places up to 6 cover blocks on 8 slots (`castle.layout_problem`), and blocks never decide the winner.*
+
 - Block: 32 × 32 px, **100 HP**. A block at 0 HP is destroyed: it disappears and stops blocking shots.
 - Template for the left castle (top row first; `#` = block). The right castle uses each row
   reversed, so its tower faces left:
@@ -606,6 +649,8 @@ On an intact castle, a hit damages **2–6 blocks, usually 3–4** (77 % of hits
   This is an accepted simplification (R4).
 
 ### 4.6 Projectile physics (shared by the game, the AI and the tests)
+> *The constants and the update rule are current. Historical: the launch points (360, 390) / (920, 390) are the M1 tower cannons; today the pivots are (340, 544) and (940, 544). Since M3.4-A collision is checked along the whole segment of each step (`battle.segment_entry`), so a shot can't pass through a target whatever its speed.*
+
 ```
 GRAVITY         = 400 px/s²  (screen y points down)
 SPEED_PER_POWER = 7          (power 10–100 → 70–700 px/s)
@@ -671,6 +716,8 @@ What still isn't known (§13, Q1):
 ## 5. Architecture
 
 ### 5.1 Modules, created only when a milestone needs them
+> *Partly historical: the module list is current, but some entries describe plans that were never built (`ActionPlan`, the phases of §2.2, `TURN_MODE`, `aim_power`). The current classes are in `docs/M5_class_diagram.mmd`.*
+
 | Module | Created in | Contents | Imports pygame? |
 |---|---|---|---|
 | `castle.py` | M1 | `Block`, `Castle`, castle geometry constants (`GROUND_Y`, `TEMPLATE`, …) | no |
@@ -695,6 +742,8 @@ load pygame. It runs the import in a fresh `python -c` subprocess and checks
 `"pygame" not in sys.modules`, so other tests that import `main.py` can't spoil the result.
 
 ### 5.2 Classes
+> *Partly historical: `Castle.destruction_percent` and `has_fallen` were removed in M3.4-A; `ActionPlan`, `submit_plan`, the M2 Battle phases and `Team.cannon` / `Team.ai` were never built; `Cannon.fire()` takes no arguments. The current classes and relationships: `docs/M5_class_diagram.mmd` and `docs/M5_final_report_draft.md` §6.*
+
 **`castle.py`** (M1)
 | Class | Responsibility |
 |---|---|
@@ -849,6 +898,8 @@ We also simulated Rebound-style target-offset noise; see review §3.5.)
 ---
 
 ## 7. File structure by milestone
+> *Historical: the planned layout. The current files are listed in the README ("Project layout"); there is no `assets/` or `docs/report/` folder (the screenshots are in `docs/screenshots/`).*
+
 ```
 pygame-castle_campaign/
 ├── main.py              # M1+  Pygame loop, screens, input, drawing (sound from M4)
@@ -891,17 +942,22 @@ of the PM's list of important requirements.
 | **Clean Code and Comments (10)** | Docstrings on every class and public method, named constants at the top of each module, short functions, no dead code, consistent naming | Every milestone; audit in M5 | Medium: `main.py` size (R3) |
 | **Report Completeness (5)** | Report sections, documented algorithms (physics, explosion, damage, EXP, Repair, AI), screenshots, demo video, references (including Rebound) | M5 | Low once Q1/Q5 give the template |
 
+> *Historical in part (M5.1): "both victory conditions" refers to the removed castle win; since M3.4-A there is one victory condition (elimination) and a timeout draw. The current rubric audit is in `docs/M5.1_submission_audit.md`.*
+
+
 ---
 
 ## 9. Requirement → milestone mapping
+> *Historical rows (M5.1): the rows marked *(Historical)* describe the M1–M3.3 design, and the test notes in the projectile row (the default shot landing at x 770–800, the speed bound) refer to the M1 tests. The current map is the requirement-to-evidence matrix in `docs/M5.1_submission_audit.md`.*
+
 
 | Course / project requirement | Where | Milestone | Verified by |
 |---|---|---|---|
-| Pygame window, battlefield, two castles, one cannon per side | `main.py`, `castle.py`, `battle.Cannon` | M1 | manual checklist |
+| *(Historical: M1)* Pygame window, battlefield, two castles, one cannon per side | `main.py`, `castle.py`, `battle.Cannon` | M1 | manual checklist |
 | Projectile angle / power / gravity | `Projectile.step`, §4.6 | M1 | test_battle (determinism, default shot lands at x 770–800, speed bound, no legal shot reaches the 600-step timeout) |
 | Explosion and collision detection | `Battle._explode`, `Castle.apply_blast` | M1 | test_castle, test_battle |
-| Castle damage, destruction %, 60 % loss | `Castle.apply_blast`, `destruction_percent`, `has_fallen` | M1 | test_castle |
-| Attack action | `ActionPlan("attack")`, `Battle.begin_resolution` | M2 | test_battle |
+| *(Historical: removed in M3.4-A)* Castle damage, destruction %, 60 % loss | `Castle.apply_blast`, `destruction_percent`, `has_fallen` | M1 | test_castle |
+| Attack action *(Historical row: `ActionPlan` was never built; today `Battle.perform_action`)* | `ActionPlan("attack")`, `Battle.begin_resolution` | M2 | test_battle |
 | Defend −50 % damage | `calculate_damage(... defending)`, `Character.defend` | M2 | test_characters (exact halving, minimum 1, lasts until next turn) |
 | Castle Guard (M3.2) | `Battle.castle_guarded`, `CASTLE_GUARD_PERCENT`, `Battle._end_shot` | M3.2 | test_combat `CastleGuardTest` (Defend and Rally, expiry, rounding, only the defending team, can save a castle, covers the defender's last shot, not in the M1 duel); test_main (log line) |
 | Special ability + cooldown | `use_special` overrides, `start_cooldown` / `tick_cooldown` | M2 | test_characters (round r → r + cooldown), test_battle |
@@ -956,6 +1012,8 @@ of the PM's list of important requirements.
   without a licence that allows it.
 
 ### 10.3 Implementation risks
+> *Historical in part: R2, R3 and R11 record measurements from M3.1–M3.2 under the old castle rules (`main.py` is now 1,415 lines); R6 and R8 no longer apply. The current risks: `docs/M5.1_submission_audit.md` §6.*
+
 - **R1 Physics tunnelling.** Prevented by the speed bound (§4.6), enforced by a unit test.
 - **R2 AI strength.** Hard hits characters ~80 % of the time. Tune in M3 with the AI-vs-AI tests.
   Target: a Normal PvAI match lasts 8–15 rounds. *M3.1 measured (seeded, castle loss off):
@@ -990,11 +1048,15 @@ of the PM's list of important requirements.
 ---
 
 ## 11. Roadmap
+> *The milestone plans below are the plans as they were written (historical); each milestone's status lines say what was built. Castle victory, the tie-breakers and `TURN_MODE` were removed or never built.*
+
 
 No time estimates are given; each milestone ends when its acceptance criteria pass and the PM
 approves.
 
 ### M1 — Minimal artillery and destructible-castle prototype
+> *Historical: the M1 prototype (two castles, a castle-destruction win at 60 %) was built in M1 and removed in M3.4-A (last present at commit `86b90fa`).*
+
 - **Required features:**
   - A 1280 × 720 Pygame window with sky, ground and two castles.
   - One cannon per side, with an aim arrow.
@@ -1100,7 +1162,9 @@ section's crack lines and visible event feedback. M4.2-A (sound, atmosphere, rea
 presentation only) done, accepted with two items unverified; it covers the sounds and the silent
 fallback. M4.2-B (Defend: Guarded Strike and the anti-stall rule) done and accepted (with the M4.2-B.1 AI safety
 fix). M4.3 (final gameplay stabilization; no rule changed, no defect found) done, awaiting PM
-review: `docs/M4.3_stabilization_report.md`. Next: M5, only after PM approval.
+review: `docs/M4.3_stabilization_report.md`. M4.3 accepted.
+
+**M5 status:** M5.1 (final submission audit and report draft; documentation only, no gameplay change) done, awaiting PM review: `docs/M5.1_submission_audit.md`, `docs/M5_final_report_draft.md`, `docs/M5_class_diagram.mmd`. Next: M5.2, only after PM approval.
 
 **Updated in M2.3.**
 - **Required:** Player vs AI.
@@ -1180,6 +1244,8 @@ review: `docs/M4.3_stabilization_report.md`. Next: M5, only after PM approval.
 ---
 
 ## 12. Approaches considered
+> *Historical: decisions made for the M0–M2 design (simultaneous turns, tower cannons, castles). Several were reversed later (alternating turns in M2.3; ground cannons and cover in M3.4-A).*
+
 
 | Decision | Options | Chosen and why |
 |---|---|---|
@@ -1199,6 +1265,8 @@ review: `docs/M4.3_stabilization_report.md`. Next: M5, only after PM approval.
 ---
 
 ## 13. Open questions for the PM and the instructor
+> *Partly historical: Q6–Q8 were answered during M1–M3, and Q3's castle win (C2) was settled by removing it in M3.4-A. Q1 (rubric details), Q2 (the graders' Python version), Q4 (reference projects) and Q5 (report format) are still open; see `docs/M5.1_submission_audit.md`.*
+
 
 **Instructor**
 - **Q1 — Rubric details, due dates and example formulas.** Please confirm the §8 and §9 mapping
@@ -1231,6 +1299,8 @@ review: `docs/M4.3_stabilization_report.md`. Next: M5, only after PM approval.
 ---
 
 ## 14. Process log
+> *A dated record, kept as written. Entries describe the game as it was at that time; later entries and the blocks at the top of this document take precedence.*
+
 
 ### Revision 1 (M0, 2026-11-19 04:22–04:35 UTC)
 The first design draft, reviewed by an independent reviewer agent. The fixes from that review are

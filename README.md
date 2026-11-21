@@ -6,7 +6,7 @@ stands behind its own cover blocks and shares one cannon standing in front of th
 teams take turns: pick a character, aim the cannon, and Attack, Defend or use a Special ability.
 **You win by defeating every enemy character.**
 
-**Current status: Milestone 5.2-A — instructor compliance and the final report (gameplay feature-frozen since M4.3, except the required defend sound).**
+**Current status: Milestone 5.2-B — the final report as a PDF (`docs/Castle_Siege_Final_Report.pdf`); the code is frozen at commit `a4ceef8`.**
 - Only elimination wins. Castle destruction is not a victory condition.
 - Before each battle, every team places its own cover: up to 6 blocks on 8 fixed slots. Against
   the computer you place the LEFT cover and the computer places its own.
@@ -34,6 +34,8 @@ teams take turns: pick a character, aim the cannon, and Attack, Defend or use a 
   defeat): a successful Defend, or a Knight's Rally, plays it once. The final report
   (`docs/M5_final_report.md`) has the explanation of the code, class diagrams, test results,
   screenshots from unmodified matches and, in Appendix B, the complete source code.
+- M5.2-B: the report exported as an 82-page PDF, a screenshot of the full test run in a real
+  terminal, and the complete class diagram also shown in five readable parts. No code changed.
 
 You play the LEFT team against a computer opponent (Easy, Normal or Hard), or two people play
 each other on one computer. The design and roadmap are in [docs/M0_design.md](docs/M0_design.md).
@@ -374,10 +376,12 @@ python -m unittest discover tests
 | `docs/M3.3_course_compliance.md` | Course requirements checklist: what is verified, what awaits a manual check, what is missing, and our custom rules (updated for M5.1) |
 | `docs/M4.2-B_defend_design_review.md` | M4.2-B: the audit of Defend and the redesign that was approved and built (Guarded Strike, anti-stall) |
 | `docs/M4.3_stabilization_report.md` | M4.3: the final stabilization report (test matrix, seeded matches, course-compliance gaps, remaining human checks) |
-| `docs/screenshots/` | Screenshots of the game: 01–08 from scripted runs, 09–14 from complete unmodified matches |
+| `docs/screenshots/` | Screenshots: 01–08 from scripted runs, 09–14 from complete unmodified matches, 15 the full test run in a terminal |
+| `docs/Castle_Siege_Final_Report.pdf` | The final report as a PDF (M5.2-B), made from `docs/M5_final_report.md` |
 | `docs/M5_final_report.md` | The final report (M5.2-A): the 300–500-word explanation of the code, gameplay, algorithms, class diagrams, testing, screenshots, AI-assistance draft, and the complete source code (Appendix B) |
 | `docs/M5_class_diagram_main.mmd`, `docs/M5_class_diagram.mmd` | Class diagrams: simplified and complete (editable Mermaid sources) |
-| `docs/figures/` | The two class diagrams, rendered as images for the report |
+| `docs/M5_class_diagram_part_2.mmd` … `_part_6.mmd` | The complete diagram cut into five readable parts (made by script from `docs/M5_class_diagram.mmd`) |
+| `docs/figures/` | The class diagrams (simplified, complete and its five parts), rendered as images for the report |
 | `docs/M5.1_submission_audit.md` | Submission audit (M5.1, revised in M5.2-A with the instructor requirements the PM confirmed): matrix, source-code check, screenshots, risks, final human checklist |
 | `docs/Rebound_reference_review.md` | Review of a reference project (ideas only) |
 

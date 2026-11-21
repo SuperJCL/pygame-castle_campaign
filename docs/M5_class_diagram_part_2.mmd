@@ -1,0 +1,65 @@
+classDiagram
+    %% Castle Siege - complete class diagram, part A.2: Game and its screens (M5.2-B).
+    %% Cut automatically from docs/M5_class_diagram.mmd so the text is readable on a page:
+    %% the class blocks and relationships are copied unchanged; each relationship is drawn in
+    %% exactly one part. A class drawn as an empty box marked <<in A.x>> is shown with its
+    %% members in that part.
+    direction LR
+
+    class Game {
+        +str state
+        +Battle battle
+        +AIController ai
+        +TeamSelection selection
+        +CoverSetup setup
+        +CannonRun cannon_run
+        +SoundBoard sounds
+        +list log
+        +handle_event(event)
+        +update()
+        +draw()
+        +do_action(action)
+        +update_ai()
+        +start_cannon_run(shot)
+        +fire_pending_shot(shot)
+        +show_event(event)
+        +rematch()
+    }
+    class TeamSelection {
+        +bool vs_ai
+        +str difficulty
+        +int team_size
+        +dict picks
+        +toggle(side, role) str
+        +is_complete() bool
+        +roster() dict
+    }
+    class CoverSetup {
+        +dict layouts
+        +click_slot(side, slot) str
+    }
+    class Button {
+        +Rect rect
+        +str label
+        +bool enabled
+        +bool chosen
+        +is_clicked(pos) bool
+        +draw(screen, font)
+    }
+    class SoundBoard {
+        +dict sounds
+        +bool muted
+        +bool available
+        +play(name)
+        +stop()
+        +toggle_mute()
+    }
+    class Battle {
+        <<in A.4>>
+    }
+
+    Game "1" *-- "1" TeamSelection : selection
+    Game "1" *-- "1" CoverSetup : setup
+    Game "1" *-- "many" Button : buttons
+    Game "1" *-- "1" SoundBoard : sounds
+    Game "1" *-- "0..1" Battle : battle

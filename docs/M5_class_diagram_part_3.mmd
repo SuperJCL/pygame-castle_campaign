@@ -1,0 +1,66 @@
+classDiagram
+    %% Castle Siege - complete class diagram, part A.3: the run to the cannon and the computer opponent (M5.2-B).
+    %% Cut automatically from docs/M5_class_diagram.mmd so the text is readable on a page:
+    %% the class blocks and relationships are copied unchanged; each relationship is drawn in
+    %% exactly one part. A class drawn as an empty box marked <<in A.x>> is shown with its
+    %% members in that part.
+    direction TB
+
+    class CannonRun {
+        +str state
+        +int frame
+        +PendingShot shot
+        +start(shot, slot_x)
+        +step() bool
+        +cancel()
+        +is_busy() bool
+        +actor_x() float
+    }
+    class PendingShot {
+        +str side
+        +int actor_index
+        +str action
+        +int angle
+        +int power
+        +Plan plan
+    }
+    class AIController {
+        +str side
+        +str difficulty
+        +dict settings
+        +Random rng
+        +bool defended_last_turn
+        +pick_team(size) list
+        +choose_layout() tuple
+        +choose(battle) Plan
+        +carry_out(battle, plan) Plan
+        +take_turn(battle) Plan
+        +wants_to_defend(team) bool
+        +attack_plan(battle, use_specials) Plan
+        +defensive_plan(battle, use_specials) Plan
+        +safety_plan(battle) Plan
+    }
+    class Plan {
+        +int actor_index
+        +str action
+        +int angle
+        +int power
+        +float score
+        +str reason
+        +bool defensive
+        +str goal
+        +fires_a_shot() bool
+    }
+    class Battle {
+        <<in A.4>>
+    }
+    class Game {
+        <<in A.2>>
+    }
+
+    Game "1" *-- "0..1" AIController : ai
+    Game "1" *-- "1" CannonRun : cannon_run
+    CannonRun "1" --> "0..1" PendingShot : shot
+    PendingShot "1" --> "0..1" Plan : plan
+    AIController ..> Battle : choose() and carry_out() receive it
+    AIController ..> Plan : creates

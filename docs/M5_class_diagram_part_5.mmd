@@ -1,0 +1,40 @@
+classDiagram
+    %% Castle Siege - complete class diagram, part A.5: the cover (M5.2-B).
+    %% Cut automatically from docs/M5_class_diagram.mmd so the text is readable on a page:
+    %% the class blocks and relationships are copied unchanged; each relationship is drawn in
+    %% exactly one part. A class drawn as an empty box marked <<in A.x>> is shown with its
+    %% members in that part.
+    direction TB
+
+    class Castle {
+        +str side
+        +tuple layout
+        +int max_hp
+        -list _blocks
+        +alive_blocks() list
+        +apply_blast(px, py, radius, damage) tuple
+        +is_damaged() bool
+        +repair(pool) int
+        +total_hp() int
+    }
+    class Block {
+        +int x
+        +int y
+        +int size
+        +int max_hp
+        -int _hp
+        +take_damage(amount) int
+        +restore(amount) int
+        +is_destroyed() bool
+        +rect() tuple
+    }
+    class Battle {
+        <<in A.4>>
+    }
+    class Team {
+        <<in A.4>>
+    }
+
+    Battle "1" *-- "2" Castle : castles
+    Team "1" --> "1" Castle : castle
+    Castle "1" *-- "0..6" Block : _blocks

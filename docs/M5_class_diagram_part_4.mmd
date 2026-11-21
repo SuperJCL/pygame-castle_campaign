@@ -1,0 +1,66 @@
+classDiagram
+    %% Castle Siege - complete class diagram, part A.4: the battle, its teams and cannons (M5.2-B).
+    %% Cut automatically from docs/M5_class_diagram.mmd so the text is readable on a page:
+    %% the class blocks and relationships are copied unchanged; each relationship is drawn in
+    %% exactly one part. A class drawn as an empty box marked <<in A.x>> is shown with its
+    %% members in that part.
+    direction TB
+
+    class Battle {
+        +dict teams
+        +dict castles
+        +dict cannons
+        +Projectile projectile
+        +str active_side
+        +str first_side
+        +int round_number
+        +str winner
+        +str end_reason
+        -list _events
+        -dict _defended_last_turn
+        +perform_action(actor_index, action) bool
+        +why_not_allowed(actor_index, action) str
+        +update()
+        +take_events() list
+        +check_winner() str
+        +path_contacts(side, angle, power) list
+        +reset(first_side)
+        -_end_shot(impact)
+        -_finish_turn(actor, exp)
+        -_start_round()
+        -_start_turn(side)
+    }
+    class Team {
+        +str side
+        +tuple characters
+        +Castle castle
+        +alive_characters() list
+        +has_lost() bool
+        +character_rect(index) tuple
+        +characters_near(px, py, radius) list
+        +is_covered(index, px, py) bool
+    }
+    class Cannon {
+        +str side
+        +int x
+        +int y
+        -int _angle
+        -int _power
+        +adjust_angle(change)
+        +adjust_power(change)
+        +fire() Projectile
+    }
+    class Projectile {
+        +float x
+        +float y
+        +float vx
+        +float vy
+        +str side
+        +int steps
+        +step()
+    }
+
+    Battle "1" *-- "2" Team : teams
+    Battle "1" *-- "2" Cannon : cannons
+    Battle "1" --> "0..1" Projectile : projectile in flight
+    Cannon ..> Projectile : fire() creates

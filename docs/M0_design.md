@@ -1,6 +1,6 @@
 # Castle Siege — M0 Requirements and Architecture
 
-Status: **Revision 3 (M2.3), updated for M5.2-A.** This is the living design document. The game
+Status: **Revision 3 (M2.3), updated for M5.2-B.** This is the living design document. The game
 is implemented up to M5.2-A (Player vs AI, two-player hot seat, the M3.2 balance numbers, the
 M3.3 match flow, the M3.4-A redesign: elimination-only victory and deployable cover, M3.4-B: the
 cover placement screen and a cover-aware computer opponent, M3.4-B.1: Easy's aiming error
@@ -1179,8 +1179,10 @@ review: `docs/M4.3_stabilization_report.md`. M4.3 accepted.
 **M5 status:** M5.1 (final submission audit and report draft; documentation only) done and
 accepted. M5.2-A (instructor compliance: the defend sound; the final report
 `docs/M5_final_report.md` with the complete source code; class diagrams; screenshots from
-unmodified matches; the revised audit `docs/M5.1_submission_audit.md`) done, awaiting PM
-review. No further gameplay work without PM approval.
+unmodified matches; the revised audit `docs/M5.1_submission_audit.md`) done and accepted.
+M5.2-B (documentation only: the PDF `docs/Castle_Siege_Final_Report.pdf`, a terminal screenshot
+of the full test run, readable parts of the complete class diagram) done, awaiting PM review.
+No further gameplay work without PM approval.
 
 **Updated in M2.3.**
 - **Required:** Player vs AI.

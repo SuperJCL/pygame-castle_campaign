@@ -1,0 +1,56 @@
+classDiagram
+    %% Castle Siege - complete class diagram, part A.6: the characters (M5.2-B).
+    %% Cut automatically from docs/M5_class_diagram.mmd so the text is readable on a page:
+    %% the class blocks and relationships are copied unchanged; each relationship is drawn in
+    %% exactly one part. A class drawn as an empty box marked <<in A.x>> is shown with its
+    %% members in that part.
+    direction TB
+
+    class Character {
+        +str name
+        +str side
+        -int _hp
+        -int _max_hp
+        -int _atk
+        -int _defense
+        -int _level
+        -int _exp
+        -bool _is_defending
+        -int _special_cooldown
+        -str _guarded_strike
+        +is_alive() bool
+        +take_hit(attacker, multiplier, ignores_def) int
+        +attack_shot() ShotDamage
+        +defend()
+        +start_cooldown()
+        +tick_cooldown()
+        +special_blocked_reason(team) str
+        +use_special(team) tuple
+        +gain_exp(amount) int
+        -_level_up()
+    }
+    class Knight {
+        +use_special(team) tuple
+    }
+    class Archer {
+        +use_special(team) tuple
+    }
+    class Engineer {
+        +int REPAIR_POOL
+        +special_blocked_reason(team) str
+        +use_special(team) tuple
+    }
+    class ShotDamage {
+        +int block_damage
+        +float multiplier
+        +bool ignores_def
+    }
+    class Team {
+        <<in A.4>>
+    }
+
+    Character <|-- Knight
+    Character <|-- Archer
+    Character <|-- Engineer
+    Team "1" *-- "1..3" Character : characters
+    Character ..> ShotDamage : attack_shot() and use_special() return

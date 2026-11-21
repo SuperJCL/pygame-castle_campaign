@@ -30,8 +30,8 @@
 
 ## 2. Explanation of how the code works (300–500 words)
 
-*Word count: **435**, counted automatically as whitespace-separated words between the two
-markers in this file. A stricter count, which splits names like `pygame.event.get()` into
+*Word count: **435**, counted automatically as whitespace-separated words of this section's text
+(between two markers in the Markdown source, `docs/M5_final_report.md`). A stricter count, which splits names like `pygame.event.get()` into
 parts, gives 455. Re-count after any edit.*
 
 <!-- explanation:start -->
@@ -246,7 +246,8 @@ one is the hit. So a fast shot can't pass through a thin target.
 
 **Figure 1.** The main classes and how they relate. The complete diagram, with every class and
 its main members, is Appendix A. Editable Mermaid sources: `docs/M5_class_diagram_main.mmd` and
-`docs/M5_class_diagram.mmd`. Both images were rendered with Mermaid 11.4.1 in a browser and
+`docs/M5_class_diagram.mmd` (with its five readable parts, `docs/M5_class_diagram_part_2.mmd` to
+`_part_6.mmd`). Both images were rendered with Mermaid 11.4.1 in a browser and
 checked by eye.
 
 **How to read the arrows:**
@@ -307,7 +308,7 @@ checked by eye.
 | `test_main.py` | 149 | Screens, buttons, keys, the computer's turn, the result screen, sounds for events |
 
 **Results.**
-- **Automated tests (final code):** 411 run, 411 passed with Pygame. Without Pygame, the 158
+- **Automated tests (final code):** 411 run, 411 passed with Pygame (Figure 2). Without Pygame, the 158
   interface tests (`test_main`, `test_sound`) are skipped and the other 253 pass.
 - **Complete matches (M4.3):** 72 scripted matches through the interface covering every mode,
   team size, cover type and first mover. No error, refused action or stuck turn; 71 ended by
@@ -331,71 +332,67 @@ checked by eye.
   sound once, the computer's Defend plays it too, refused actions and Repair are silent, M mutes
   it, and a rematch stops all sounds.
 
-Test output of the final run (Pygame installed):
-
-```
-Ran 411 tests in 261.188s
-
-OK
-```
+![Figure 2 — Test run in a terminal](screenshots/15_test_run_terminal.png)
+**Figure 2. The complete test suite in a terminal** (a screen capture of a real console window,
+not edited). It ran from 18:09:50 to 18:13:26 on 2026-11-20 (UTC−8) on commit `c034633`, whose
+game code is the submitted code of Appendix B (commit `a4ceef8`): "Ran 411 tests in 213.583s",
+"OK". Pygame 2.6.1 was installed, so no test was skipped. The prompt was shortened to ">" so that
+no local folder name appears.
 
 ## 7. Screenshots
 
 Every picture is a real frame of the running game (`main.Game`), saved by a script on a hidden
-display (no picture was edited). Figures 2–7 come from complete, unmodified Player vs AI
+display (no picture was edited). Figures 3–8 come from complete, unmodified Player vs AI
 matches: the script only entered the LEFT side's moves through the game's own mouse and keyboard
 handling, choosing them with the built-in AI. No HP, cooldown or other value was changed.
-Figures 8–13 were taken with scripted moves to show particular screens, as each caption says.
+Figures 9–14 were taken with scripted moves to show particular screens, as each caption says.
 
-![Figure 2 — Power Shot](screenshots/09_power_shot_natural.png)
-**Figure 2. Special ability.** Round 1: the LEFT Archer's Power Shot (orange) in flight; the
+![Figure 3 — Power Shot](screenshots/09_power_shot_natural.png)
+**Figure 3. Special ability.** Round 1: the LEFT Archer's Power Shot (orange) in flight; the
 Archer runs back from the cannon. (Match A: 3 v 3 against the Easy computer.)
 
-![Figure 3 — Defend](screenshots/10_defend_natural.png)
-**Figure 3. Defend.** Round 5 of match A: the LEFT Archer defends (blue bubble), its cover shows
+![Figure 4 — Defend](screenshots/10_defend_natural.png)
+**Figure 4. Defend.** Round 5 of match A: the LEFT Archer defends (blue bubble), its cover shows
 GUARDED, a hollow gold star marks its Guarded Strike, and the log explains it. The computer is
 thinking.
 
-![Figure 4 — Guarded Strike](screenshots/11_guarded_strike_natural.png)
-**Figure 4. Guarded Strike.** Round 6 of match A: the same Archer attacks with its Guarded Strike
+![Figure 5 — Guarded Strike](screenshots/11_guarded_strike_natural.png)
+**Figure 5. Guarded Strike.** Round 6 of match A: the same Archer attacks with its Guarded Strike
 ("+25%" over its name; "ATK x1.25" in the log), and the shot is in the air.
 
-![Figure 5 — Victory](screenshots/12_victory_natural.png)
-**Figure 5. Natural victory.** Match A ends in round 14: every RIGHT character was defeated.
+![Figure 6 — Victory](screenshots/12_victory_natural.png)
+**Figure 6. Natural victory.** Match A ends in round 14: every RIGHT character was defeated.
 
-![Figure 6 — Rally](screenshots/13_rally_natural.png)
-**Figure 6. Special ability (Rally).** Round 2 of match B (3 v 3 against the Hard computer): the
+![Figure 7 — Rally](screenshots/13_rally_natural.png)
+**Figure 7. Special ability (Rally).** Round 2 of match B (3 v 3 against the Hard computer): the
 LEFT Knight's Rally makes all three LEFT characters defend, after the Archer and the Engineer
 each took 60 damage.
 
-![Figure 7 — Defeat](screenshots/14_defeat_natural.png)
-**Figure 7. Defeat.** Match B ends in round 11: the computer (RIGHT) has defeated every LEFT
+![Figure 8 — Defeat](screenshots/14_defeat_natural.png)
+**Figure 8. Defeat.** Match B ends in round 11: the computer (RIGHT) has defeated every LEFT
 character.
 
-![Figure 8 — Team selection](screenshots/01_team_selection.png)
-**Figure 8. Character selection** (Player vs AI, 3 v 3; the computer picks its own team).
+![Figure 9 — Team selection](screenshots/01_team_selection.png)
+**Figure 9. Character selection** (Player vs AI, 3 v 3; the computer picks its own team).
 
-![Figure 9 — Cover placement](screenshots/02_cover_placement.png)
-**Figure 9. Cover placement** (two-player mode, LEFT team): 5 of 6 blocks, an open slot ("+") and
+![Figure 10 — Cover placement](screenshots/02_cover_placement.png)
+**Figure 10. Cover placement** (two-player mode, LEFT team): 5 of 6 blocks, an open slot ("+") and
 a slot that can't take a block ("×").
 
-![Figure 10 — A 3v3 battle](screenshots/03_battle_3v3.png)
-**Figure 10. The battle screen:** turn banner, health bars, the chosen character, the aim, the
+![Figure 11 — A 3v3 battle](screenshots/03_battle_3v3.png)
+**Figure 11. The battle screen:** turn banner, health bars, the chosen character, the aim, the
 action buttons and the combat log.
 
-![Figure 11 — The run to the cannon](screenshots/04_run_to_cannon.png)
-**Figure 11. Attack animation:** the RIGHT Archer runs to its team's cannon (scripted moves).
+![Figure 12 — The run to the cannon](screenshots/04_run_to_cannon.png)
+**Figure 12. Attack animation:** the RIGHT Archer runs to its team's cannon (scripted moves).
 
-![Figure 12 — Explosion and damage](screenshots/05_explosion_and_damage.png)
-**Figure 12. Explosion and damage:** "-28" over the LEFT Knight, a cracked block, and the log
+![Figure 13 — Explosion and damage](screenshots/05_explosion_and_damage.png)
+**Figure 13. Explosion and damage:** "-28" over the LEFT Knight, a cracked block, and the log
 (scripted moves).
 
-![Figure 13 — Timeout draw](screenshots/08_timeout_draw.png)
-**Figure 13. Draw after the round limit.** To reach round 30 the script passed every turn
+![Figure 14 — Timeout draw](screenshots/08_timeout_draw.png)
+**Figure 14. Draw after the round limit.** To reach round 30 the script passed every turn
 (Defend, or a harmless shot when Defend wasn't allowed).
-
-*[Testing screenshot: the student adds a screenshot of a terminal showing
-`python -m unittest discover tests` ending with "Ran 411 tests ... OK".]*
 
 ## 8. Final results and conclusion
 
@@ -424,14 +421,20 @@ screen, and saving match statistics.
 
 ## 9. AI assistance disclosure
 
-*[Draft. The student checks the course's policy on AI tools and adjusts this section; the policy
-is not known to us.]*
+*[To be confirmed by the student: check the course's policy on AI tools and adjust this section.
+We do not know the policy.]*
 
-This project was developed with AI assistance. ChatGPT acted as a project manager: it wrote the
-milestone plans and reviewed each step. Claude Code (an AI coding assistant) wrote the code,
-tests and documentation according to those plans. The work was checked through automated tests
-and human play-testing at several milestones. *[Add what the student designed, decided
-or wrote personally.]*
+This project was developed with AI assistance:
+- **ChatGPT** acted as the project manager. It wrote the milestone plans and briefs, set the
+  constraints and reviewed each milestone.
+- **Claude Code** (an AI coding assistant) wrote the Python code and the tests, ran them, and
+  wrote the documentation, including this report. It also produced the class diagrams, the
+  screenshots and this PDF, all by script from the real game and code.
+- **Human testing:** a person play-tested earlier versions of the game, the interface polish
+  (M4.1) and the sound and atmosphere version (M4.2-A), and reported the results. The final
+  version has not yet been play-tested by a person (see section 8).
+
+*[Student: add what you designed, decided, tested or wrote yourself.]*
 
 ## 10. References
 
@@ -445,18 +448,55 @@ or wrote personally.]*
 
 ## Appendix A — Complete class diagram
 
-![Figure 14 — Complete class diagram](figures/class_diagram_full.png)
-
-**Figure 14.** All 20 classes with their main attributes and methods (source:
-`docs/M5_class_diagram.mmd`). Functions that are not methods, such as `calculate_damage`,
+Figure 15 shows all 20 classes in one picture (source: `docs/M5_class_diagram.mmd`). It is too
+large to read at page size, so Figures 16–20 show the same diagram in five parts. Each part is cut
+automatically from the same source, with its class boxes and relationships unchanged, and each
+of the 23 relationships is drawn in exactly one part. A box marked «in A.x» is a class whose
+members are shown in part A.x. Functions that are not methods, such as `calculate_damage`,
 `layout_problem` and `segment_entry`, are not drawn.
+
+### A.1 Overview
+
+![Figure 15 — Complete class diagram](figures/class_diagram_full.png)
+**Figure 15.** The complete class diagram (overview; zoom in to read it, or see Figures 16–20).
+
+### A.2 Game and its screens
+
+![Figure 16 — Game and its screens](figures/class_diagram_part_2.png)
+**Figure 16.** `Game` owns the selection and cover choices, the buttons, the sound board and the
+current `Battle`. Its run to the cannon and its computer opponent are in part A.3.
+
+### A.3 The run to the cannon and the computer opponent
+
+![Figure 17 — The run and the computer opponent](figures/class_diagram_part_3.png)
+**Figure 17.** `Game` owns a `CannonRun`, which holds the `PendingShot` of a running character,
+and, against the computer, an `AIController`, which creates `Plan`s and receives the `Battle` as
+an argument.
+
+### A.4 The battle, its teams and cannons
+
+![Figure 18 — Battle, teams and cannons](figures/class_diagram_part_4.png)
+**Figure 18.** `Battle` owns two `Team`s and two `Cannon`s and refers to the `Projectile` in flight,
+which a `Cannon` creates.
+
+### A.5 The cover
+
+![Figure 19 — The cover](figures/class_diagram_part_5.png)
+**Figure 19.** `Battle` owns the two `Castle`s (a team's cover); a `Team` refers to its `Castle`; a
+`Castle` owns its `Block`s.
+
+### A.6 The characters
+
+![Figure 20 — The characters](figures/class_diagram_part_6.png)
+**Figure 20.** `Knight`, `Archer` and `Engineer` inherit from `Character`; a `Team` owns its
+characters; a character's attack or special returns a `ShotDamage`.
 
 ---
 
 <!-- source-appendix:start -->
 ## Appendix B — Complete Python source code
 
-The eight game source files, 3620 lines in total, copied automatically from the submitted code (commit `a4ceef8`, `a4ceef8ad30aae6f9e697c6ce6b1cbb58c942b0e`) by a script, not by hand. Every comment and every space of indentation is kept. The tests (`tests/`, 8 files) are submitted with the code but not printed here. A second script checked each block below against the files in git: same bytes, same line count, same SHA-256.
+The eight game source files, 3620 lines in total, copied automatically from the submitted code (commit `a4ceef8`, `a4ceef8ad30aae6f9e697c6ce6b1cbb58c942b0e`) by a script, not by hand. Every comment and every space of indentation is kept. The tests (`tests/`, 8 files) are submitted with the code but not printed here. A second script checked each block below against the files in git: same bytes, same line count, same SHA-256. In the PDF, line numbers are printed beside the code, and the few lines too long for the page continue on the next printed row, indented.
 
 | | File | Lines | SHA-256 of the file | Contents |
 |---|---|---|---|---|

@@ -1,8 +1,8 @@
 """The run to the cannon (M3.4-C): an attacking character runs to its team's cannon, fires
 it and runs back. This is a visual effect only.
 
-Each team has one shared cannon. When a character attacks (ATTACK, or the Archer's Power
-Shot), main.py does not fire straight away. A CannonRun goes through four states:
+Each team has one shared cannon. When a character attacks (ATTACK, or a special that fires:
+Power Shot, Triple Volley, Airburst), main.py does not fire straight away. A CannonRun goes through four states:
 
     IDLE -> RUN_TO_CANNON -> FIRE -> RETURN_TO_SLOT -> IDLE
 
@@ -19,7 +19,6 @@ Like the rule modules, this file uses only the Python standard library (no Pygam
 can be tested without opening a window.
 """
 from battle import CANNON_PIVOT, direction
-from characters import Archer
 
 IDLE = "idle"
 RUN_TO_CANNON = "run to cannon"
@@ -41,9 +40,10 @@ def firing_x(side):
 
 
 def fires_the_cannon(character, action):
-    """True if `action` by `character` fires the team's cannon: every Attack, and the
-    Archer's Power Shot. Defend, Rally and Repair fire nothing, so they happen at once."""
-    return action == "attack" or (action == "special" and isinstance(character, Archer))
+    """True if `action` by `character` fires the team's cannon: every Attack, and a special that
+    fires shells (M6.3: the role's SPECIAL_SHELLS, so Power Shot, Triple Volley and Airburst).
+    Defend, Rally, Repair and Field Dressing fire nothing, so they happen at once."""
+    return action == "attack" or (action == "special" and character.SPECIAL_SHELLS > 0)
 
 
 class PendingShot:

@@ -19,7 +19,7 @@ try:
     import main
     from ai import AIController, Plan
     from animation import FIRE, FIRE_FRAMES, RETURN_FRAMES, RETURN_TO_SLOT, RUN_FRAMES, RUN_TO_CANNON, firing_x
-    from battle import CANNON_PIVOT, ROUND_LIMIT, SLOT_X, Battle
+    from battle import BLAST_RADIUS, CANNON_PIVOT, ROUND_LIMIT, SLOT_X, Battle
     from castle import DEFAULT_LAYOUT, GROUND_Y, layout_problem, slot_position
     from characters import Archer, Engineer, Knight
 except ImportError:          # Pygame is not installed: the tests below are skipped
@@ -43,6 +43,24 @@ def load_sdl():
         for path in glob.glob(os.path.join(folder, pattern)):
             return ctypes.CDLL(path)
     return None
+
+
+def battle_key(game, name):
+    """The key the team to move uses for `name`: "up", "down", "more", "less" or "fire". (M6.2
+    rework: with two players LEFT uses W/S, D/A and F, RIGHT Up/Down, Left/Right and Enter; against
+    the computer the person keeps the arrow keys and SPACE.)"""
+    keys = game.battle_keys()
+    return keys["fire"][0] if name == "fire" else keys[name]
+
+
+def restart_with_r(game):
+    """R as a person presses it: let go, then pressed (a fresh press). M6.4: during a match R first
+    asks "Restart match?" and R pressed again answers Restart; after the match R rematches at once."""
+    game.handle_event(pygame.event.Event(pygame.KEYUP, key=pygame.K_r, mod=0))
+    game.handle_key(pygame.K_r, 0)
+    if game.match_paused:
+        game.handle_event(pygame.event.Event(pygame.KEYUP, key=pygame.K_r, mod=0))
+        game.handle_key(pygame.K_r, 0)
 
 
 def finish_shot(game):
@@ -176,10 +194,13 @@ class DrawingHelpersTest(MainTestCase):
     def test_the_hud_counts_standing_characters_and_blocks(self):
         self.start([Knight, Archer], [Engineer, Knight])
         battle = self.game.battle
-        self.assertEqual(self.game.hud_team_line("left"), "LEFT  2/2 standing   cover 6/6")
+        # M6.2: the standing count is the big line; the cover count went to a smaller line under it.
+        self.assertEqual((self.game.hud_team_line("left"), self.game.hud_detail_line("left")),
+                         ("LEFT  2/2", "standing · cover 6/6"))
         battle.teams["right"].characters[1].take_damage(500)
         battle.castles["right"].blocks[0].take_damage(100)
-        self.assertEqual(self.game.hud_team_line("right"), "RIGHT  1/2 standing   cover 5/6")
+        self.assertEqual((self.game.hud_team_line("right"), self.game.hud_detail_line("right")),
+                         ("RIGHT  1/2", "standing · cover 5/6"))
 
 
 class TeamSelectionTest(MainTestCase):
@@ -483,7 +504,7 @@ class SetupFlowTest(MainTestCase):
                 character.take_damage(30)
                 character.defend()
         battle.castles["right"].blocks[0].take_damage(100)
-        self.game.handle_key(pygame.K_r, 0)
+        restart_with_r(self.game)
         self.assertEqual(battle.layouts, layouts)
         self.assertEqual(battle.layouts["left"], (0, 2, 3, 4))
         for side in ("left", "right"):
@@ -535,17 +556,17 @@ class ActionButtonTest(MainTestCase):
         self.assertEqual(self.game.battle.castles["right"].total_hp(), 600 - 200)  # Knight: 4 x 50
         self.assertEqual(self.game.battle.active_side, "right")
 
-    def test_space_is_the_attack_shortcut(self):
+    def test_the_fire_key_is_the_attack_shortcut(self):
         self.start([Knight], [Engineer])
-        self.game.handle_key(pygame.K_SPACE, 0)
+        self.game.handle_key(pygame.K_f, 0)                            # two players: LEFT fires with F
         self.assertEqual(self.game.cannon_run.shot.action, "attack")
         run_to_cannon(self.game)
         self.assertIsNotNone(self.game.battle.projectile)
 
-    def test_arrow_keys_aim_the_active_cannon(self):
+    def test_the_aim_keys_aim_the_active_cannon(self):
         self.start([Knight], [Engineer])
-        self.game.handle_key(pygame.K_UP, SHIFT)
-        self.game.handle_key(pygame.K_RIGHT, 0)
+        self.game.handle_key(pygame.K_w, SHIFT)                        # two players: LEFT's W and D
+        self.game.handle_key(pygame.K_d, 0)
         cannon = self.game.battle.cannons["left"]
         self.assertEqual((cannon.angle, cannon.power), (50, 51))
 
@@ -623,6 +644,39 @@ class ActionButtonTest(MainTestCase):
         self.assertIn("HP 64/90", " ".join(self.game.selected_info_lines()))   # right's turn: Archer selected
 
 
+class PowerSliderTest(MainTestCase):
+    def mouse(self, event_type, x, **fields):
+        self.game.handle_event(pygame.event.Event(
+            event_type, pos=(x, self.game.power_bar.centery), **fields))
+
+    def test_drag_sets_power_and_release_ends_drag(self):
+        self.start([Knight], [Archer])
+        bar = self.game.power_bar
+        cannon = self.game.battle.cannons["left"]
+        initial_angle = cannon.angle
+        self.mouse(pygame.MOUSEBUTTONDOWN, bar.centerx, button=1)
+        self.assertEqual((cannon.power, cannon.angle), (55, initial_angle))
+        self.mouse(pygame.MOUSEMOTION, bar.left - 80, buttons=(1, 0, 0))
+        self.assertEqual(cannon.power, main.MIN_POWER)
+        self.mouse(pygame.MOUSEMOTION, bar.right + 80, buttons=(1, 0, 0))
+        self.assertEqual(cannon.power, main.MAX_POWER)
+        self.mouse(pygame.MOUSEBUTTONUP, bar.right, button=1)
+        self.mouse(pygame.MOUSEMOTION, bar.left, buttons=(0, 0, 0))
+        self.assertEqual(cannon.power, main.MAX_POWER)
+
+    def test_drag_ends_on_focus_loss_and_cannot_start_during_attack(self):
+        self.start([Knight], [Archer])
+        bar = self.game.power_bar
+        self.mouse(pygame.MOUSEBUTTONDOWN, bar.centerx, button=1)
+        self.game.handle_event(pygame.event.Event(pygame.WINDOWFOCUSLOST))
+        self.mouse(pygame.MOUSEMOTION, bar.right, buttons=(1, 0, 0))
+        self.assertEqual(self.game.battle.cannons["left"].power, 55)
+        self.click(self.game.action_buttons["attack"].rect)
+        self.mouse(pygame.MOUSEBUTTONDOWN, bar.right, button=1)
+        self.assertFalse(self.game.dragging_power)
+        self.assertEqual(self.game.cannon_run.shot.power, 55)
+
+
 class KeyboardTest(MainTestCase):
     """Aiming and R with the keyboard (these were checked in the M1 duel until M3.4)."""
 
@@ -630,49 +684,49 @@ class KeyboardTest(MainTestCase):
         super().setUp()
         self.start([Knight], [Archer])
 
-    def test_arrow_keys_change_angle_and_power_by_1_or_5_with_shift(self):
+    def test_aim_keys_change_angle_and_power_by_1_or_5_with_shift(self):
         cannon = self.game.battle.cannons["left"]          # starts at 45 deg, power 50
-        self.game.handle_key(pygame.K_UP, 0)
-        self.game.handle_key(pygame.K_UP, SHIFT)
-        self.game.handle_key(pygame.K_DOWN, 0)
+        self.game.handle_key(pygame.K_w, 0)                # two players: LEFT aims with W/S and D/A
+        self.game.handle_key(pygame.K_w, SHIFT)
+        self.game.handle_key(pygame.K_s, 0)
         self.assertEqual(cannon.angle, 45 + 1 + 5 - 1)
-        self.game.handle_key(pygame.K_RIGHT, SHIFT)
-        self.game.handle_key(pygame.K_LEFT, 0)
+        self.game.handle_key(pygame.K_d, SHIFT)
+        self.game.handle_key(pygame.K_a, 0)
         self.assertEqual(cannon.power, 50 + 5 - 1)
 
-    def test_the_right_cannon_answers_the_same_keys_on_its_turn(self):
-        self.game.handle_key(pygame.K_SPACE, 0)            # left attacks
+    def test_the_right_cannon_answers_its_own_keys_on_its_turn(self):
+        self.game.handle_key(pygame.K_f, 0)                # left attacks
         finish_shot(self.game)
         self.assertEqual(self.game.battle.active_side, "right")
         self.game.handle_key(pygame.K_UP, SHIFT)
-        self.game.handle_key(pygame.K_LEFT, 0)
+        self.game.handle_key(pygame.K_LEFT, 0)             # M6.2 rework: Left adds RIGHT's power (toward the middle)
         right, left = self.game.battle.cannons["right"], self.game.battle.cannons["left"]
-        self.assertEqual((right.angle, right.power), (50, 49))
+        self.assertEqual((right.angle, right.power), (50, 51))
         self.assertEqual((left.angle, left.power), (45, 50))
 
     def test_aiming_is_locked_while_a_shot_flies(self):
-        self.game.handle_key(pygame.K_SPACE, 0)
+        self.game.handle_key(pygame.K_f, 0)
         run_to_cannon(self.game)
-        self.game.handle_key(pygame.K_UP, 0)
-        self.game.handle_key(pygame.K_RIGHT, 0)
+        self.game.handle_key(pygame.K_w, 0)
+        self.game.handle_key(pygame.K_d, 0)
         cannon = self.game.battle.cannons["left"]
         self.assertEqual((cannon.angle, cannon.power), (45, 50))
 
     def test_r_during_a_flight_cancels_the_shot(self):
-        self.game.handle_key(pygame.K_SPACE, 0)
+        self.game.handle_key(pygame.K_f, 0)
         run_to_cannon(self.game)
         for _ in range(FIRE_FRAMES + RETURN_FRAMES + 10):              # the Knight is back by now
             self.game.update()
         self.assertIsNotNone(self.game.battle.projectile)
-        self.game.handle_key(pygame.K_r, 0)
+        restart_with_r(self.game)
         self.assertIsNone(self.game.battle.projectile)
         self.assertTrue(self.game.battle.can_fire())
 
     def test_r_clears_explosion_effects(self):
-        self.game.handle_key(pygame.K_SPACE, 0)
+        self.game.handle_key(pygame.K_f, 0)
         finish_shot(self.game)                              # the default aim explodes on the ground
         self.assertEqual(len(self.game.explosions), 1)
-        self.game.handle_key(pygame.K_r, 0)
+        restart_with_r(self.game)
         self.assertEqual(self.game.explosions, [])
 
 
@@ -738,7 +792,7 @@ class AbilityPreflightTest(MainTestCase):
         self.act("special")                                    # right Engineer: Repair
         self.assertEqual(castle.total_hp(), 600 - 200 + 150)
         self.assertEqual(sorted(b.hp for b in castle.blocks if b.hp < 100), [50])
-        self.assertEqual(self.game.hud_team_line("right"), "RIGHT  1/1 standing   cover 6/6")
+        self.assertEqual(self.game.hud_detail_line("right"), "standing · cover 6/6")   # M6.2: was in hud_team_line
         self.assertIn("regains 150 HP", " ".join(self.game.log))
         self.assertEqual(self.game.battle.active_side, "left")
 
@@ -801,7 +855,7 @@ class ResultScreenTest(MainTestCase):
         aim(self.game, *COVER_WALL)                            # destroys the 4 blocks in the blast
         self.click(self.game.action_buttons["attack"].rect)
         finish_shot(self.game)
-        self.assertEqual(self.game.hud_team_line("right"), "RIGHT  1/1 standing   cover 2/6")
+        self.assertEqual(self.game.hud_detail_line("right"), "standing · cover 2/6")   # M6.2: was in hud_team_line
         self.assertEqual(self.game.state, "battle")
         self.assertIsNone(self.game.battle.winner)
 
@@ -830,7 +884,7 @@ class ResultScreenTest(MainTestCase):
 
     def test_r_is_a_rematch_shortcut(self):
         self.win_quickly()
-        self.game.handle_key(pygame.K_r, 0)
+        restart_with_r(self.game)
         self.assertEqual(self.game.state, "battle")
         self.assertIsNone(self.game.battle.winner)
 
@@ -865,10 +919,10 @@ class RematchAndFirstMoverTest(MainTestCase):
             end_match_now(self)
             self.click(self.game.rematch_button.rect)
             firsts.append(self.game.battle.active_side)
-        self.game.handle_key(pygame.K_r, 0)                    # R is a rematch too
+        restart_with_r(self.game)                    # R is a rematch too
         firsts.append(self.game.battle.active_side)
         self.assertEqual(firsts, ["left", "right", "left", "right", "left"])
-        self.game.handle_key(pygame.K_r, 0)
+        restart_with_r(self.game)
         self.assertEqual(self.game.battle.round_number, 1)     # a right-first match still shows Round 1
         self.assertEqual(self.game.log, ["--- Round 1 ---", "RIGHT team moves first."])
 
@@ -899,7 +953,7 @@ class RematchAndFirstMoverTest(MainTestCase):
         self.click(self.game.action_buttons["special"].rect)   # Power Shot: block damage, EXP, cooldown
         finish_shot(self.game)
         self.assertLess(battle.castles["right"].total_hp(), 600)   # the computer's own cover was hit
-        self.game.handle_key(pygame.K_r, 0)                    # R restarts at any time
+        restart_with_r(self.game)                    # R restarts at any time
         self.assertIs(self.game.ai, ai)
         self.assertEqual(ai.difficulty, "hard")
         self.assertIsNone(battle.projectile)
@@ -932,7 +986,7 @@ class RematchAndFirstMoverTest(MainTestCase):
 
     def test_two_players_can_play_with_right_first(self):
         self.start([Knight], [Archer])
-        self.game.handle_key(pygame.K_r, 0)                    # RIGHT starts
+        restart_with_r(self.game)                    # RIGHT starts
         self.assertTrue(self.game.action_buttons["attack"].enabled)
         aim(self.game, *FRONT_CHARACTER)
         self.click(self.game.action_buttons["attack"].rect)    # the RIGHT Archer: 40 - 12 = 28
@@ -1014,7 +1068,7 @@ class ResultReasonTest(MainTestCase):
         self.assertEqual(self.game.result_title(), "LEFT TEAM WINS!")
         self.assertEqual(self.game.result_reason(), "Every RIGHT character was defeated.")
         self.assertEqual(self.game.result_rounds(), f"Final round: 1 / {ROUND_LIMIT}")
-        self.game.handle_key(pygame.K_r, 0)                    # RIGHT moves first now
+        restart_with_r(self.game)                    # RIGHT moves first now
         end_match_now(self)
         self.assertEqual(self.game.result_title(), "RIGHT TEAM WINS!")
         self.assertEqual(self.game.result_reason(), "Every LEFT character was defeated.")
@@ -1032,7 +1086,7 @@ class ResultReasonTest(MainTestCase):
 
     def test_a_timeout_draw_with_right_moving_first(self):
         self.start([Knight, Archer], [Knight, Archer])
-        self.game.handle_key(pygame.K_r, 0)                    # RIGHT first: the limit still holds
+        restart_with_r(self.game)                    # RIGHT first: the limit still holds
         defend_until_the_end(self)
         self.assertEqual(self.game.battle.round_number, ROUND_LIMIT)
         self.assertEqual(self.game.result_title(), "DRAW!")
@@ -1143,7 +1197,7 @@ class PlayerVsAIBattleTest(MainTestCase):
         # M4.2-B.1: right after its own Defend, the computer's final safety net must not be a
         # Defend (the anti-stall rule refuses it); it attacks, and the turn moves on.
         battle = self.game.battle
-        self.game.handle_key(pygame.K_r, 0)                       # RIGHT (the computer) moves first
+        restart_with_r(self.game)                       # RIGHT (the computer) moves first
         battle.perform_action(0, "defend")                        # RIGHT defends (by hand) ...
         self.game.update()
         self.click(self.game.action_buttons["defend"].rect)       # ... LEFT passes: RIGHT again
@@ -1209,8 +1263,11 @@ class CannonRunTest(MainTestCase):
         """Every combat input a player could try: all three buttons, SPACE, aiming and 1-3."""
         for button in self.game.action_buttons.values():
             self.game.handle_click(button.rect.center)
-        for key in (pygame.K_SPACE, pygame.K_UP, pygame.K_RIGHT, pygame.K_2):
+        for name in ("fire", "up", "more"):              # taps of the keys of the team to move
+            key = battle_key(self.game, name)
             self.game.handle_key(key, 0)
+            self.game.handle_event(pygame.event.Event(pygame.KEYUP, key=key, mod=0))
+        self.game.handle_key(pygame.K_2, 0)
         self.game.handle_click(pygame.Rect(self.character_rect(self.game.battle.active_side, 1)).center)
 
     def test_attack_starts_the_run_and_fires_only_when_the_cannon_is_reached(self):
@@ -1241,7 +1298,7 @@ class CannonRunTest(MainTestCase):
         aim(self.game, *COVER_WALL)
         cannon = self.game.battle.cannons["left"]
         self.click(self.game.action_buttons["attack"].rect)
-        self.game.handle_key(pygame.K_SPACE, 0)                           # the same frame as the click
+        self.game.handle_key(battle_key(self.game, "fire"), 0)            # the same frame as the click
         frames = 0
         while self.game.cannon_run.is_busy():                             # run, fire pose and return
             self.press_everything()
@@ -1371,7 +1428,7 @@ class CannonRunTest(MainTestCase):
         self.assertEqual(self.game.battle.active_side, "right")
         self.game.update()
         self.assertTrue(self.game.action_buttons["attack"].enabled)       # now RIGHT may act
-        self.game.handle_key(pygame.K_SPACE, 0)
+        self.game.handle_key(battle_key(self.game, "fire"), 0)
         self.assertEqual(self.game.cannon_run.shot.side, "right")
 
     def test_two_players_each_run_to_their_own_cannon(self):
@@ -1388,7 +1445,7 @@ class CannonRunTest(MainTestCase):
         self.assertEqual((self.game.battle.active_side, self.game.battle.round_number), ("left", 2))
 
     def test_after_a_rematch_right_moves_first_and_runs_to_its_own_cannon(self):
-        self.game.handle_key(pygame.K_r, 0)
+        restart_with_r(self.game)
         self.assertEqual(self.game.battle.active_side, "right")
         aim(self.game, *HARMLESS)
         self.click(self.game.action_buttons["attack"].rect)
@@ -1407,7 +1464,7 @@ class CannonRunTest(MainTestCase):
         self.click(self.game.action_buttons["attack"].rect)
         for _ in range(5):
             self.game.update()
-        self.game.handle_key(pygame.K_r, 0)
+        restart_with_r(self.game)
         battle = self.game.battle
         self.assertFalse(self.game.cannon_run.is_busy())
         self.assertEqual((self.game.state, battle.round_number, battle.active_side), ("battle", 1, "right"))
@@ -1425,11 +1482,11 @@ class CannonRunTest(MainTestCase):
                 for _ in range(frames_after_launch):
                     self.game.update()
                 self.assertTrue(self.game.cannon_run.is_busy())
-                self.game.handle_key(pygame.K_r, 0)
+                restart_with_r(self.game)
                 self.assertFalse(self.game.cannon_run.is_busy())
                 self.assertIsNone(self.game.battle.projectile)
                 self.assertEqual(self.game.battle.round_number, 1)
-                self.game.handle_key(pygame.K_r, 0)                       # LEFT first again for the next pass
+                restart_with_r(self.game)                       # LEFT first again for the next pass
 
     def test_defend_rally_and_repair_happen_at_once_without_a_run(self):
         battle = self.game.battle
@@ -1484,7 +1541,7 @@ class CannonRunTest(MainTestCase):
         self.assertEqual(self.game.battle.active_side, "right")           # it alternates as before
         self.click(self.game.action_buttons["attack"].rect)
         self.assertTrue(self.game.cannon_run.is_busy())
-        self.game.handle_key(pygame.K_ESCAPE, 0)                          # closing the game mid-run
+        self.game.handle_event(pygame.event.Event(pygame.QUIT))          # closing the window mid-run
         self.assertFalse(self.game.running)
         self.assertFalse(self.game.cannon_run.is_busy())
         self.assertIsNone(self.game.battle.projectile)
@@ -1674,7 +1731,7 @@ class SoundEventsTest(MainTestCase):
         stopped = []
         self.game.sounds.stop = lambda: stopped.append(True)
         self.click(self.game.action_buttons["defend"].rect)
-        self.game.handle_key(pygame.K_r, 0)
+        restart_with_r(self.game)
         self.assertEqual(played, ["defend"])
         self.assertTrue(stopped)
 
@@ -1702,7 +1759,7 @@ class SoundEventsTest(MainTestCase):
         self.assertEqual(battle.winner, "right")
         self.assertEqual(played[-1], "defeat")
         self.assertEqual(played.count("defeat"), 1)
-        self.game.handle_key(pygame.K_r, 0)
+        restart_with_r(self.game)
         for _ in range(2 * ROUND_LIMIT * 200):                    # both sides only pass, to the limit
             if self.game.state == "result":
                 break
@@ -1726,7 +1783,7 @@ class SoundEventsTest(MainTestCase):
         aim(self.game, *COVER_WALL)
         self.click(self.game.action_buttons["attack"].rect)
         run_to_cannon(self.game)
-        self.game.handle_key(pygame.K_r, 0)                       # the shot is cancelled mid-flight
+        restart_with_r(self.game)                       # the shot is cancelled mid-flight
         self.assertTrue(stopped)
         for _ in range(300):
             self.game.update()
@@ -1757,7 +1814,7 @@ class SoundEventsTest(MainTestCase):
         finish_shot(self.game)
         self.assertEqual(self.game.state, "result")
         self.game.handle_key(pygame.K_m, 0)
-        self.game.handle_key(pygame.K_r, 0)
+        restart_with_r(self.game)
         self.game.draw()
         self.assertEqual(self.game.state, "battle")
 
@@ -1812,8 +1869,10 @@ class InterfacePolishTest(MainTestCase):
         aim(self.game, *FRONT_CHARACTER)
         self.click(self.game.action_buttons["attack"].rect)
         finish_shot(self.game)
-        self.assertEqual(self.game.message, "RIGHT Archer takes 26 damage.")     # not "Knight gains 10 EXP."
-        self.assertIn("Knight gains 10 EXP.", self.game.log)                    # still in the log
+        # M6.2: the short result of the shot (impact_summary), not "Knight gains 10 EXP."
+        self.assertEqual(self.game.message, "DIRECT HIT · Archer -26 HP")
+        self.assertIn("RIGHT Archer takes 26 damage.", self.game.log)          # the details are in the log
+        self.assertIn("Knight gains 10 EXP.", self.game.log)
 
     def test_the_turn_banner_says_what_is_happening(self):
         self.start([Knight], [Archer])
@@ -1840,13 +1899,14 @@ class InterfacePolishTest(MainTestCase):
     def test_the_aim_is_shown_in_the_panel_and_under_the_active_cannon(self):
         self.start([Knight], [Archer])
         for _ in range(5):
-            self.game.handle_key(pygame.K_UP, 0)
-        self.game.handle_key(pygame.K_RIGHT, SHIFT)
-        self.assertEqual(self.game.aim_text(), "Angle 50°   Power 55")
+            self.game.handle_key(battle_key(self.game, "up"), 0)
+        self.game.handle_key(battle_key(self.game, "more"), SHIFT)
+        self.assertEqual(self.game.aim_values(), ("50°", "55"))                  # M6.2: was aim_text()
         self.assertEqual(self.game.cannon_label(self.game.battle.cannons["left"]), "50° / 55")
         self.game.draw()
 
     def test_the_panel_hints_fit_under_the_buttons_for_every_role(self):
+        # M6.2: one help line under the aim, at most two rows of HINT_WIDTH, inside the panel.
         self.start([Knight, Archer, Engineer], [Knight, Archer, Engineer])
         for index in range(3):
             for blocked in (False, True):
@@ -1857,8 +1917,9 @@ class InterfacePolishTest(MainTestCase):
                     self.game.select_actor(index)
                     hints = []
                     for line in self.game.action_hint_lines():
-                        hints.extend(main.wrap_text(line, self.game.tiny_font, 390))
-                    self.assertLessEqual(main.PANEL_TOP + 84 + 18 * len(hints), main.WINDOW_HEIGHT, hints)
+                        hints.extend(main.wrap_text(line, self.game.tiny_font, main.HINT_WIDTH))
+                    self.assertLessEqual(len(hints), 2, hints)
+                    self.assertLessEqual(main.HINT_Y + 14 * len(hints), main.WINDOW_HEIGHT, hints)
 
     # ----- feedback on the battlefield ------------------------------------------------
 
@@ -1878,19 +1939,19 @@ class InterfacePolishTest(MainTestCase):
     def test_shielded_and_defeated_characters_get_their_own_words(self):
         self.start([Knight], [Archer])
         event = {"type": "explosion", "side": "left", "kind": "block", "x": 1100, "y": 528, "target": None,
-                 "blocks_hit": 1, "damage": 50, "guarded": False, "covered": ["Archer"], "characters_hit": []}
+                 "radius": 50, "blocks_hit": 1, "damage": 50, "guarded": False, "covered": ["Archer"], "characters_hit": []}
         self.game.show_event(event)
         self.assertEqual([text for _, _, text, _, _ in self.game.floaters], ["shielded"])
         event.update(covered=[], characters_hit=[{"name": "Archer", "damage": 26, "defeated": True}])
         self.game.show_event(event)
         self.assertEqual([text for _, _, text, _, _ in self.game.floaters], ["shielded", "-26", "DEFEATED"])
-        self.game.handle_key(pygame.K_r, 0)                     # a rematch clears them
+        restart_with_r(self.game)                     # a rematch clears them
         self.assertEqual(self.game.floaters, [])
 
     def test_an_explosion_no_longer_hides_the_character_it_hits(self):
         self.start([Knight], [Archer])
         x, y = self.game.battle.teams["right"].slot_center(0)
-        self.game.explosions = [[x, y, 0]]                      # a fresh explosion right on the Archer
+        self.game.explosions = [[x, y, 0, BLAST_RADIUS]]        # a fresh explosion right on the Archer (M6.3: + its radius)
         body = self.pixel(x, main.GROUND_Y - 20)
         self.assertNotEqual(body, (255, 220, 80))                # not covered by the solid yellow
         self.assertNotEqual(body, main.TEAM_COLORS["right"])     # but the explosion is still visible
@@ -1904,10 +1965,10 @@ class InterfacePolishTest(MainTestCase):
         for _ in range(main.TRAIL_LENGTH + 5):
             self.game.update()
         shot = self.game.battle.projectile
-        self.assertEqual(len(self.game.trail), main.TRAIL_LENGTH)
+        self.assertEqual(len(self.game.trails[shot]), main.TRAIL_LENGTH)   # M6.3: one trail per shell
         self.assertEqual(self.pixel(shot.x, shot.y), main.POWER_SHOT_COLOR)
         finish_shot(self.game)
-        self.assertEqual(self.game.trail, [])
+        self.assertEqual(self.game.trails, {})
         aim(self.game, *HARMLESS)                               # RIGHT's Knight: a plain attack
         self.click(self.game.action_buttons["attack"].rect)
         run_to_cannon(self.game)
@@ -1985,7 +2046,7 @@ class InterfacePolishTest(MainTestCase):
         banner = main.result_banner_rect()
         win = self.pixel(banner.left + 4, banner.top + 4)
         self.assertEqual(win, main.TEAM_COLORS["left"])
-        self.game.handle_key(pygame.K_r, 0)
+        restart_with_r(self.game)
         defend_until_the_end(self)
         self.assertEqual(self.pixel(banner.left + 4, banner.top + 4), main.DRAW_COLOR)
         self.assertIn("time limit", self.game.result_subtitle().lower())
@@ -2002,7 +2063,7 @@ class AtmosphereTest(MainTestCase):
         background = self.game.background
         self.start([Knight], [Archer])
         self.game.draw()
-        self.game.handle_key(pygame.K_r, 0)
+        restart_with_r(self.game)
         self.game.draw()
         self.assertIs(self.game.background, background)              # built once, then only copied
         top, horizon = self.background_at(640, 90), self.background_at(640, 440)
@@ -2039,7 +2100,7 @@ class AtmosphereTest(MainTestCase):
     def test_floating_words_on_one_character_never_overlap(self):
         self.start([Knight], [Archer])
         hit = {"type": "explosion", "side": "left", "kind": "character", "x": 1140, "y": 520, "target": "Archer",
-               "blocks_hit": 0, "damage": 0, "guarded": False, "covered": [],
+               "radius": 50, "blocks_hit": 0, "damage": 0, "guarded": False, "covered": [],
                "characters_hit": [{"name": "Archer", "damage": 26, "defeated": False}]}
         for _ in range(3):                                            # three quick hits on the same Archer
             self.game.show_event(dict(hit))
@@ -2140,18 +2201,19 @@ class GuardedStrikeUITest(MainTestCase):
         self.right_passes()
         self.assertFalse(self.game.action_buttons["defend"].enabled)
         self.assertTrue(self.game.action_buttons["attack"].enabled)
-        self.assertIn("DEFEND unavailable", " ".join(self.game.action_hint_lines()))
-        for index in range(2):                                    # the hints still fit the panel
+        # M6.2: the reason is the help line for DEFEND (shown when the mouse is on it) and the
+        # button's note.
+        self.assertIn("two turns in a row", self.game.action_help("defend"))
+        self.assertEqual(self.game.action_buttons["defend"].note, "not twice")
+        for index in range(2):                                    # the help still fits the panel
             self.game.select_actor(index)
-            hints = []
-            for line in self.game.action_hint_lines():
-                hints.extend(main.wrap_text(line, self.game.tiny_font, 390))
-            self.assertLessEqual(main.PANEL_TOP + 84 + 18 * len(hints), main.WINDOW_HEIGHT, hints)
+            hints = main.wrap_text(self.game.action_help("defend"), self.game.tiny_font, main.HINT_WIDTH)
+            self.assertLessEqual(len(hints), 2, hints)
         self.game.select_actor(0)
         self.click(self.game.action_buttons["defend"].rect)       # clicking it explains, does nothing
         self.assertIn("two turns in a row", self.game.message)
         self.assertEqual(self.game.battle.active_side, "left")
-        self.game.handle_key(pygame.K_r, 0)                       # a new match forgets it
+        restart_with_r(self.game)                       # a new match forgets it
         self.click(self.game.action_buttons["defend"].rect)       # RIGHT moves first now
         self.assertEqual(self.game.battle.active_side, "left")
 

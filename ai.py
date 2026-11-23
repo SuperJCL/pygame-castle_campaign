@@ -21,6 +21,21 @@ Before a battle, an AIController places its team's cover (choose_layout). On its
    carries the plan out with Battle.perform_action(), the method the ATTACK / DEFEND /
    SPECIAL buttons call. So it has to follow every rule a human follows.
 
+M6.3: a special that fires (Power Shot, and now Triple Volley and Airburst: the role's
+SPECIAL_SHELLS) is imagined on the copy like an Attack, so the real rules decide how much its
+shells are worth. When a Triple Volley or Airburst could be fired, every shooter is also tried at
+the aims of the next EXTRA_AIMS best targets, and every option is rated by its average over the
+AI's own power error (as expected_score does for targets): a spread of shells is worth having
+because a slightly wrong aim still hits. A Medic's Field Dressing is chosen instead when the HP it
+restores is worth more than the shot (heal_plan); with nobody hurt it is never chosen.
+
+M6.4: the rules have no chance in them, so an imagined shot always ends the same way. Within one
+decision the AIController remembers every shot it has imagined (AIController.imagine), so none is
+imagined twice. And thinking_ahead() imagines, one shot per step, the shots the next decision will
+ask for: main.py runs a few steps in each frame of the computer's pause, so the decision itself
+finds them in the memory and the window keeps answering. Neither rolls dice or changes a score, so
+every decision is exactly the one the AI made before.
+
 The difficulty (DIFFICULTY_SETTINGS) changes only these choices and the aiming error,
 never the damage, the cooldowns, the cover budget or which actions are allowed. The AI
 sees only what a player sees: the battlefield, the HP bars and its own aiming skill.
@@ -32,7 +47,7 @@ import random
 
 from battle import FIELD_WIDTH, MAX_ANGLE, MAX_POWER, MAX_STEPS, MIN_ANGLE, MIN_POWER, clamp, other_side
 from castle import MAX_BLOCKS, SLOT_COUNT, place_block
-from characters import ARCHETYPES, Archer, Engineer, Knight, calculate_damage
+from characters import ARCHETYPES, Engineer, Knight, Medic, calculate_damage
 
 # How each difficulty plays. All of them follow exactly the same game rules.
 #   angle_error, power_error  the most the final aim can be off (degrees, power points)
@@ -62,6 +77,9 @@ WIN_BONUS = 10                   # an option that wins the game beats everything
 # opening a shot at an enemy counts half as much as hitting that enemy now.
 COVER_WEIGHT = 0.5
 TOWER = (0, 4)                   # the AI's cover always starts with these two slots (see choose_layout)
+# M6.3: when a Triple Volley or Airburst could be fired, every shooter is also tried at the aims of this
+# many more of the best targets (a spread of shells may do best at another aim than one shell).
+EXTRA_AIMS = 2
 
 
 class Plan:
@@ -77,7 +95,7 @@ class Plan:
         self.reason = reason            # a short sentence for the combat log
         self.defensive = defensive      # Defend or Rally
         # What the action is for: "damage" (hit a character), "cover" (break cover in
-        # front of one), "defend", "repair", or None (the fallback aim).
+        # front of one), "defend", "repair", "heal" (M6.3), or None (the fallback aim).
         self.goal = goal
 
     def fires_a_shot(self):
@@ -135,6 +153,14 @@ def progress(before, after, side):
     return score
 
 
+def heal_value(battle, side, gained):
+    """What restoring `gained` HP to one of `side`'s characters is worth (M6.3, Field Dressing), on
+    the same scale as progress(): the HP restored / our team's HP left. It is the mirror of the
+    damage part of progress() (enemy HP removed / enemy HP left), so the less HP the team has left,
+    the more a heal is worth."""
+    return gained / max(1, team_hp(battle.teams[side]))
+
+
 def first_explosion(events):
     """The explosion event of an imagined shot, or None if it flew off the field."""
     for event in events:
@@ -152,22 +178,29 @@ def landed_on_own_half(events, side):
     return False
 
 
-def scan_aims(battle, scout_index):
+def scan_aims(battle, scout_index, imagine_shot=None):
     """Imagine an Attack by the active team's character in `scout_index` at every scan aim.
 
     Returns [(angle, power, the copy afterwards, its events), ...]. Strong shots come
     first; once a shot comes down on our own half of the field, every weaker shot at
     that angle lands even shorter, so the scan of that angle stops there.
+    imagine_shot: the function that imagines one shot (None: imagine). M6.4: an AIController
+    passes its own, which remembers the shots of one decision (AIController.imagine).
     """
+    return list(scanning(battle, scout_index, imagine_shot))
+
+
+def scanning(battle, scout_index, imagine_shot=None):
+    """scan_aims(), one aim at a time (M6.4): a generator that gives each scanned aim as soon as it
+    is imagined, so the work can be spread over several frames (AIController.thinking_ahead)."""
+    imagine_shot = imagine_shot or imagine
     side = battle.active_side
-    scan = []
     for angle in SCAN_ANGLES:
         for power in range(MAX_POWER, MIN_POWER - 1, -SCAN_POWER_STEP):
-            trial, events = imagine(battle, scout_index, "attack", angle, power)
-            scan.append((angle, power, trial, events))
+            trial, events = imagine_shot(battle, scout_index, "attack", angle, power)
+            yield angle, power, trial, events
             if landed_on_own_half(events, side):
                 break
-    return scan
 
 
 # ----- cover: which enemy blocks are in the way of a shot at a living enemy ------------
@@ -270,10 +303,93 @@ class AIController:
         self.settings = DIFFICULTY_SETTINGS[difficulty]
         self.rng = random.Random(seed)
         self.defended_last_turn = False
+        # M6.4: the shots imagined for the decision being made, and the battle they belong to
+        # (see imagine): {(slot, action, angle, power): (the copy afterwards, its events)}.
+        self.memory = {}
+        self.memory_battle = None
 
     def new_match(self):
         """Call when a new match starts with this controller."""
         self.defended_last_turn = False
+        self.forget()
+
+    # ----- M6.4: a memory of imagined shots, and thinking ahead ---------------------------
+
+    def forget(self):
+        """Empty the memory of imagined shots: after each decision, and when a match starts again."""
+        self.memory = {}
+        self.memory_battle = None
+
+    def imagine(self, battle, actor_index, action, angle=None, power=None):
+        """imagine(), remembered for one decision. The rules have no chance in them, so the same
+        action with the same aim on the same battle always ends the same way: it is imagined once,
+        and when it is asked for again the result comes from the memory. The aim is first kept
+        inside the cannon's limits (as aim_cannon does), so power 104 and power 100 are one shot.
+        Shots imagined on another Battle object are never used."""
+        if battle is not self.memory_battle:
+            self.forget()
+            self.memory_battle = battle
+        if angle is not None:
+            angle = clamp(angle, MIN_ANGLE, MAX_ANGLE)
+            power = clamp(power, MIN_POWER, MAX_POWER)
+        key = (actor_index, action, angle, power)
+        if key not in self.memory:
+            self.memory[key] = imagine(battle, actor_index, action, angle, power)
+        return self.memory[key]
+
+    def thinking_ahead(self, battle):
+        """Imagine now, one shot per step, the shots the next decision on `battle` will ask for, so
+        they are in the memory when choose() asks. A generator: main.py runs a few steps in each
+        frame of the computer's pause, so the decision itself takes only a moment and the window
+        keeps answering. It rolls no dice and changes nothing else, so the decision is exactly the
+        one choose() would make without it.
+
+        The steps: the scan (an attack plan always starts with it); then every option the attack
+        plan could rate: the aims of the best targets it may choose from (and FALLBACK_AIM if there
+        are none), each living shooter, Attack and a special that fires, at the aim's power and, if
+        a Triple Volley or Airburst is ready, at both ends of the power error; then a Repair. The
+        dice decide which of these the decision really uses; the others cost only time in which
+        the computer was waiting anyway."""
+        team = battle.teams[self.side]
+        living = [i for i, c in enumerate(team.characters) if c.is_alive()]
+        if battle.active_side != self.side or not battle.can_fire() or not living:
+            return
+        scan = []
+        for scanned in scanning(battle, living[0], self.imagine):
+            scan.append(scanned)
+            yield
+        routes = find_routes(battle, self.side, scan)
+        targets = self.rank_targets(battle, scan, routes)
+        yield
+        choices = max(self.settings["top_choices"], EXTRA_AIMS + 1)      # see attack_plan
+        aims = [(angle, power) for _, angle, power, _, _ in targets[:choices]] or [FALLBACK_AIM]
+        error = self.settings["power_error"]
+        changes = (-error, 0, error) if self.spread_ready(battle, living) else (0,)
+        for angle, power in aims:
+            for index in living:
+                for action in self.firing_actions(battle, index, True):
+                    for change in changes:
+                        self.imagine(battle, index, action, angle, power + change)
+                        yield
+        for index, character in enumerate(team.characters):             # see repair_plan
+            if isinstance(character, Engineer) and battle.why_not_allowed(index, "special") is None:
+                self.imagine(battle, index, "special")
+                yield
+
+    def spread_ready(self, battle, living):
+        """True if one of the living characters (slots) could fire a Triple Volley or an Airburst now."""
+        team = battle.teams[self.side]
+        return any(team.characters[i].SPECIAL_SHELLS > 1 and battle.why_not_allowed(i, "special") is None
+                   for i in living)
+
+    def firing_actions(self, battle, index, use_specials):
+        """The actions that fire which slot `index` may choose: Attack, and its special if it fires
+        shells, specials are considered this turn and the special is ready."""
+        actions = ["attack"]
+        character = battle.teams[self.side].characters[index]
+        if use_specials and character.SPECIAL_SHELLS > 0 and battle.why_not_allowed(index, "special") is None:
+            actions.append("special")
+        return actions
 
     def pick_team(self, size):
         """A legal team for this AI: `size` different roles in random slot order."""
@@ -339,6 +455,7 @@ class AIController:
             plan = self.attack_plan(battle, use_specials)
         if battle.why_not_allowed(plan.actor_index, plan.action) is not None:
             plan = self.safety_plan(battle)          # it should never be needed
+        self.forget()                                # M6.4: the memory served this decision only
         return plan
 
     def safety_plan(self, battle):
@@ -391,11 +508,16 @@ class AIController:
 
     def attack_plan(self, battle, use_specials):
         """Pick a target (a character, or the cover in front of one), the character (and
-        Attack or Power Shot) to fire at it, then add the aiming error. A Repair is chosen
-        instead if it would be worth more."""
+        Attack or a special that fires) to fire at it, then add the aiming error. A Repair or
+        (M6.3) a Field Dressing is chosen instead if it would be worth more.
+
+        M6.3: if a Triple Volley or Airburst could be fired this turn, every shooter is also tried
+        at the aims of up to EXTRA_AIMS more of the best targets, every option is rated by its
+        average over this AI's power error (option_value), and the best (shooter, action, aim) is
+        chosen. Otherwise only the chosen target's aim is tried, exactly as before."""
         team = battle.teams[self.side]
         living = [i for i, c in enumerate(team.characters) if c.is_alive()]
-        scan = scan_aims(battle, living[0])
+        scan = scan_aims(battle, living[0], self.imagine)
         routes = find_routes(battle, self.side, scan)
         targets = self.rank_targets(battle, scan, routes)
         if targets:
@@ -404,26 +526,54 @@ class AIController:
             (angle, power), goal = FALLBACK_AIM, None
             description = f"the {other_side(self.side).upper()} side"
 
-        shooters = []                                  # (score, slot, action)
-        for index in living:
-            actions = ["attack"]
-            if (use_specials and isinstance(team.characters[index], Archer)
-                    and battle.why_not_allowed(index, "special") is None):
-                actions.append("special")
-            for action in actions:
-                trial, _ = imagine(battle, index, action, angle, power)
-                shooters.append((shot_value(battle, trial, self.side, routes), index, action))
-        shooters.sort(key=lambda option: option[0], reverse=True)    # stable: ties keep slot order
-        score, index, action = self.rng.choice(shooters[:self.settings["top_choices"]])
-        name = team.characters[index].name
-        verb = "uses Power Shot on" if action == "special" else "attacks"
-        plan = Plan(index, action, angle, power, score, f"{name} {verb} {description}", goal=goal)
+        aims = [(angle, power, description, goal)]
+        spread_ready = self.spread_ready(battle, living)
+        if use_specials and spread_ready:                 # M6.3: a few more aims for the shells to try
+            for _, other_angle, other_power, other_description, other_goal in targets:
+                if len(aims) > EXTRA_AIMS:
+                    break
+                if (other_angle, other_power) != (angle, power):
+                    aims.append((other_angle, other_power, other_description, other_goal))
+
+        shooters = []                                  # (score, slot, action, aim)
+        for option in aims:
+            for index in living:
+                for action in self.firing_actions(battle, index, use_specials):
+                    value = self.option_value(battle, routes, index, action, option[0], option[1],
+                                              averaged=use_specials and spread_ready)
+                    shooters.append((value, index, action, option))
+        shooters.sort(key=lambda option: option[0], reverse=True)    # stable: ties keep aim and slot order
+        score, index, action, (angle, power, description, goal) = self.rng.choice(
+            shooters[:self.settings["top_choices"]])
+        character = team.characters[index]
+        verb = f"uses {character.SPECIAL_NAME} on" if action == "special" else "attacks"
+        plan = Plan(index, action, angle, power, score, f"{character.name} {verb} {description}", goal=goal)
 
         if use_specials:
-            repair = self.repair_plan(battle)
-            if repair is not None and repair.score > plan.score:
-                return repair
+            best = plan
+            for support in (self.repair_plan(battle), self.heal_plan(battle)):
+                if support is not None and support.score > best.score:
+                    best = support
+            if best is not plan:
+                return best
         return self.with_aiming_error(plan)
+
+    def option_value(self, battle, routes, index, action, angle, power, averaged):
+        """shot_value() of `action` by slot `index` fired at (angle, power), imagined on a copy.
+
+        averaged (M6.3, only when a Triple Volley or Airburst could be fired): the average at the
+        power itself and at the two ends of this AI's power error (the most its real shot can be
+        off), so an option that still does well when the aim is a little off is rated higher.
+        Three tries, not every power in between, keep the extra thinking time small."""
+        if not averaged:
+            trial, _ = self.imagine(battle, index, action, angle, power)
+            return shot_value(battle, trial, self.side, routes)
+        error = self.settings["power_error"]
+        values = []
+        for change in (-error, 0, error):
+            trial, _ = self.imagine(battle, index, action, angle, clamp(power + change, MIN_POWER, MAX_POWER))
+            values.append(shot_value(battle, trial, self.side, routes))
+        return sum(values) / len(values)
 
     def find_targets(self, battle, scout_index):
         """What the active team can usefully aim at, best first (see rank_targets)."""
@@ -469,11 +619,23 @@ class AIController:
         team = battle.teams[self.side]
         for index, character in enumerate(team.characters):
             if isinstance(character, Engineer) and battle.why_not_allowed(index, "special") is None:
-                trial, _ = imagine(battle, index, "special")
+                trial, _ = self.imagine(battle, index, "special")
                 castle = battle.castles[self.side]
                 missing = castle.max_hp - castle.total_hp()
                 return Plan(index, "special", score=progress(battle, trial, self.side), goal="repair",
                             reason=f"{character.name} uses Repair ({missing} cover HP missing)")
+        return None
+
+    def heal_plan(self, battle):
+        """A Field Dressing by a living Medic whose special is ready (M6.3), or None. Its score is
+        heal_value() of the HP it would really restore, to the same target the heal will choose
+        (Medic.heal_target). With nobody hurt the special is refused, so this is None."""
+        team = battle.teams[self.side]
+        for index, character in enumerate(team.characters):
+            if isinstance(character, Medic) and battle.why_not_allowed(index, "special") is None:
+                target, amount = character.heal_target(team)
+                return Plan(index, "special", score=heal_value(battle, self.side, amount), goal="heal",
+                            reason=f"{character.name} uses Field Dressing on {target.name} (+{amount} HP)")
         return None
 
     def with_aiming_error(self, plan):

@@ -1,7 +1,7 @@
-"""Characters for Castle Siege: the Character base class and the Knight, Archer
-and Engineer subclasses.
+"""Characters for Castle Siege: the Character base class and its six roles, Knight, Archer,
+Engineer and (M6.3) Gunner, Bombardier and Medic.
 
-The base class holds every rule the three roles share: health, damage, defending,
+The base class holds every rule the roles share: health, damage, healing, defending,
 the special-ability cooldown, EXP and levels. Each subclass only sets its own
 numbers and its own special ability. Characters never manage the whole battle:
 battle.py decides whose turn it is and fires the cannon. This module uses only
@@ -45,12 +45,24 @@ def calculate_damage(attack, defense, defending, multiplier=1.0, ignores_def=Fal
 
 class ShotDamage:
     """How hard one cannon shot hits: damage to each cover block in the blast, and
-    how its damage to characters is worked out (see calculate_damage)."""
+    how its damage to characters is worked out (see calculate_damage).
 
-    def __init__(self, block_damage, multiplier=1.0, ignores_def=False):
+    M6.3 adds how many shells one shot is (every shell hits this hard):
+      blast_radius  the blast of each shell in px; None = the normal blast (battle.BLAST_RADIUS)
+      spread        one (angle change, power change) per shell fired at once, from the
+                    cannon's aim; a normal shot is the one shell ((0, 0),)
+      split         None, or the horizontal speed factors of the small shells each shell
+                    splits into when it starts to come down (Airburst)
+    """
+
+    def __init__(self, block_damage, multiplier=1.0, ignores_def=False, blast_radius=None,
+                 spread=((0, 0),), split=None):
         self.block_damage = block_damage
         self.multiplier = multiplier
         self.ignores_def = ignores_def
+        self.blast_radius = blast_radius
+        self.spread = spread
+        self.split = split
 
 
 class Character:
@@ -67,6 +79,7 @@ class Character:
     BLOCK_DAMAGE = None         # damage to each cover block hit by this character's Attack
     SPECIAL_NAME = None
     SPECIAL_COOLDOWN = 0        # rounds to wait after using the special
+    SPECIAL_SHELLS = 0          # M6.3: shells the special fires (0 = it fires nothing: it happens at once)
 
     def __init__(self, name, side):
         self.name = name
@@ -142,6 +155,17 @@ class Character:
         damage = calculate_damage(attacker.atk, self._defense, self._is_defending,
                                   multiplier, ignores_def)
         return self.take_damage(damage)
+
+    def heal(self, amount):
+        """Regain up to `amount` HP, never above max HP (M6.3, Field Dressing). Returns the HP
+        actually regained. A defeated character regains nothing: healing never revives."""
+        if amount < 0:
+            raise ValueError("healing cannot be negative")
+        if not self.is_alive():
+            return 0
+        gained = min(amount, self._max_hp - self._hp)
+        self._hp += gained
+        return gained
 
     def attack_shot(self):
         """The cannon shot this character fires with a normal Attack: ATK x 1.25 while its
@@ -291,6 +315,7 @@ class Archer(Character):
     BLOCK_DAMAGE = 50
     SPECIAL_NAME = "Power Shot"
     SPECIAL_COOLDOWN = 3
+    SPECIAL_SHELLS = 1
     SPECIAL_DESCRIPTION = "Aimed shot: 1.5x ATK, ignores DEF, 75 per block."
     POWER_SHOT_MULTIPLIER = 1.5          # character damage = ATK x 1.5, ignoring DEF
     POWER_SHOT_BLOCK_DAMAGE = 75
@@ -327,5 +352,102 @@ class Engineer(Character):
         return f"{self.name} uses Repair: the cover regains {restored} HP.", None
 
 
-# The three roles, in the order the team-selection screen shows them.
-ARCHETYPES = [Knight, Archer, Engineer]
+# ----- M6.3: three more roles (docs/M6.3_six_role_design.md, first-round numbers) ---------------
+
+class Gunner(Character):
+    """Offensive role: Triple Volley fires three lighter shells at once in a fixed fan, a wider
+    chance to hit for less damage per shell."""
+    BASE_HP = 115
+    BASE_ATK = 35
+    BASE_DEF = 7
+    BLOCK_DAMAGE = 50
+    SPECIAL_NAME = "Triple Volley"
+    SPECIAL_COOLDOWN = 3
+    SPECIAL_SHELLS = 3
+    SPECIAL_DESCRIPTION = "Three shells in a fixed fan: 0.6x ATK, 18 per block each."
+    VOLLEY_SPREAD = ((-6, -4), (0, 0), (6, 4))   # (angle, power) change of each shell from the aim
+    VOLLEY_MULTIPLIER = 0.60
+    VOLLEY_BLOCK_DAMAGE = 18
+    VOLLEY_BLAST_RADIUS = 32
+
+    def use_special(self, team):
+        """Triple Volley: one shot of three shells, each hitting like a light Attack. The battle fires it."""
+        shot = ShotDamage(self.VOLLEY_BLOCK_DAMAGE, self.VOLLEY_MULTIPLIER,
+                          blast_radius=self.VOLLEY_BLAST_RADIUS, spread=self.VOLLEY_SPREAD)
+        return f"{self.name} uses Triple Volley!", shot
+
+
+class Bombardier(Character):
+    """Offensive role: Airburst fires one marked shell that splits into five small ones at the top
+    of its arc, so it can pass over a wall and then spread over the enemy."""
+    BASE_HP = 100
+    BASE_ATK = 32
+    BASE_DEF = 6
+    BLOCK_DAMAGE = 50
+    SPECIAL_NAME = "Airburst"
+    SPECIAL_COOLDOWN = 4
+    SPECIAL_SHELLS = 5
+    SPECIAL_DESCRIPTION = "Splits into 5 shells at the top: 0.45x ATK, 16 per block each."
+    AIRBURST_SPLIT = (0.76, 0.88, 1.00, 1.12, 1.24)   # horizontal speed factor of each small shell
+    AIRBURST_MULTIPLIER = 0.45
+    AIRBURST_BLOCK_DAMAGE = 16
+    AIRBURST_BLAST_RADIUS = 24
+
+    def use_special(self, team):
+        """Airburst: one shell that splits; it and each small shell hit like a small shell."""
+        shot = ShotDamage(self.AIRBURST_BLOCK_DAMAGE, self.AIRBURST_MULTIPLIER,
+                          blast_radius=self.AIRBURST_BLAST_RADIUS, split=self.AIRBURST_SPLIT)
+        return f"{self.name} uses Airburst!", shot
+
+
+class Medic(Character):
+    """Support role: Field Dressing heals the living teammate who gains the most HP. The Engineer
+    saves the cover; the Medic saves the people."""
+    BASE_HP = 105
+    BASE_ATK = 28
+    BASE_DEF = 6
+    BLOCK_DAMAGE = 45
+    SPECIAL_NAME = "Field Dressing"
+    SPECIAL_COOLDOWN = 4
+    SPECIAL_DESCRIPTION = "Heals the ally who gains most: up to 32 HP (24 on itself)."
+    ALLY_HEAL = 32                       # HP another living teammate regains, at most
+    SELF_HEAL = 24                       # HP the Medic regains when it treats itself, at most
+
+    def heal_amount(self, character):
+        """HP `character` would really regain from Field Dressing now (0 if full or defeated)."""
+        if not character.is_alive():
+            return 0
+        limit = self.SELF_HEAL if character is self else self.ALLY_HEAL
+        return min(limit, character.max_hp - character.hp)
+
+    def heal_target(self, team):
+        """(character, HP it would regain) for the living teammate who would regain the most,
+        or None if nobody would regain anything. On a tie another teammate goes before the Medic
+        itself, then the earlier slot. The preview (main.py) and the heal use this same choice."""
+        best, best_amount = None, 0
+        for character in team.characters:              # slot order: on a tie the first one stays ...
+            amount = self.heal_amount(character)
+            if amount > best_amount or (amount == best_amount and amount > 0 and best is self):
+                best, best_amount = character, amount   # ... unless the one kept is the Medic itself
+        return None if best is None else (best, best_amount)
+
+    def special_blocked_reason(self, team):
+        """Field Dressing also needs someone to heal (a living teammate below full HP)."""
+        reason = super().special_blocked_reason(team)
+        if reason is None and self.heal_target(team) is None:
+            reason = "Field Dressing: nothing to heal (every living ally is at full HP)"
+        return reason
+
+    def use_special(self, team):
+        """Field Dressing: heal heal_target() by its amount. Nothing is fired. (The battle never
+        calls it with nobody to heal, but like Repair it then simply does nothing.)"""
+        choice = self.heal_target(team)
+        if choice is None:
+            return f"{self.name} uses Field Dressing: nobody needs it.", None
+        target, amount = choice
+        gained = target.heal(amount)
+        return f"{self.name} uses Field Dressing: {target.name} +{gained} HP.", None
+
+
+# The six roles, in the order the team-selection screen shows them.
+ARCHETYPES = [Knight, Archer, Engineer, Gunner, Bombardier, Medic]

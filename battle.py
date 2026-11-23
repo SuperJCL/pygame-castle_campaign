@@ -3,8 +3,8 @@
 Each side has a Team of 1-3 characters, the cover blocks it placed (its Castle) and
 one shared cannon standing in front of the cover. On its turn a team picks one
 living character and one action ("attack", "defend" or "special") with
-perform_action(). Attack (and Archer's Power Shot) fire the team's cannon with the
-acting character's stats.
+perform_action(). Attack (and the Archer's Power Shot, the Gunner's Triple Volley and the
+Bombardier's Airburst) fire the team's cannon with the acting character's stats.
 
 Shots fly under gravity and explode on the first enemy block or enemy character
 they touch, or on the ground. The explosion damages the enemy blocks and characters
@@ -18,10 +18,16 @@ M4.2-B adds two rules about Defend (each can be switched off): Guarded Strike (a
 makes the defender's normal Attack in its team's next turn use ATK x 1.25) and the anti-stall
 rule (a team can't Defend two turns in a row). Defend itself still halves damage.
 
+M6.3: one attack may fire several shells (the Gunner's Triple Volley fires three at once; the
+Bombardier's Airburst shell splits into five at the top of its arc). They all belong to the one
+attack: each shell explodes on its own, but the turn ends, the EXP is given and the winner is
+checked only once, after the last shell has landed. A normal attack is a list of one shell.
+
 Like castle.py and characters.py, this module uses only the standard library,
 so the rules can be tested without opening a window. main.py draws the battle
 and reads its events.
 """
+import copy
 import math
 
 from castle import Castle, DEFAULT_LAYOUT, GROUND_Y
@@ -120,6 +126,11 @@ class Projectile:
         self.vy = -speed * math.sin(radians)     # negative = upward on screen
         self.side = side                         # the side that fired it
         self.steps = 0
+        self.split = None    # M6.3 (Airburst): the speed factors of the shells it splits into, or None
+        # M6.4: True for the shell that flies with the cannon's own aim (a plain shot's only shell,
+        # a Triple Volley's middle shell, the Airburst shell that keeps its speed). Its landing
+        # event says so, and the screen marks where that aim landed. The rules never read it.
+        self.center = True
 
     def step(self):
         """Move forward by one time step DT.
@@ -157,9 +168,12 @@ class Cannon:
     def adjust_power(self, change):
         self._power = clamp(self._power + change, MIN_POWER, MAX_POWER)
 
-    def fire(self):
-        """Return a new projectile launched from the pivot with the current aim."""
-        return Projectile(self.x, self.y, self._angle, self._power, self.side)
+    def fire(self, angle_change=0, power_change=0):
+        """Return a new projectile launched from the pivot with the current aim. M6.3: a Triple
+        Volley's side shells change the aim a little; the result is kept inside the legal limits."""
+        angle = clamp(self._angle + angle_change, MIN_ANGLE, MAX_ANGLE)
+        power = clamp(self._power + power_change, MIN_POWER, MAX_POWER)
+        return Projectile(self.x, self.y, angle, power, self.side)
 
 
 class Team:
@@ -216,7 +230,7 @@ class Team:
 
 class Battle:
     """The state and rules of one match: teams, their cover and cannons, whose turn
-    it is, the shot in flight and the result.
+    it is, the shells in flight and the result.
 
     Things that happen (an action, a shot fired, an explosion, EXP, a new turn,
     the end of the game, a refused action) are recorded as small dictionaries in
@@ -263,9 +277,11 @@ class Battle:
             self.teams[side] = Team(side, characters, self.castles[side])
         self.round_number = 1
         self.active_side = self.first_side
-        self.projectile = None          # the shot in flight, or None
-        self._shooter = None            # the character who fired it
-        self._shot_damage = None        # the ShotDamage of the shot in flight
+        self.projectiles = []           # M6.3: the shells of the attack in flight, in the order fired
+        self._shooter = None            # the character who fired them
+        self._shot_damage = None        # the ShotDamage of the attack (every shell hits this hard)
+        self._attack_hit = False        # did a shell of this attack damage a block or a character?
+        self._attack_defeats = 0        # enemy characters this attack has defeated
         self.winner = None              # None while playing, then "left", "right" or "draw"
         # Why the match ended: "elimination", "both_lost" or "timeout" (the round limit);
         # None while playing.
@@ -276,18 +292,25 @@ class Battle:
     def is_over(self):
         return self.winner is not None
 
+    @property
+    def projectile(self):
+        """The first shell still flying, or None. Read-only: kept from before M6.3, when an attack
+        had exactly one shell, so "battle.projectile is None" still means "nothing is flying"."""
+        return self.projectiles[0] if self.projectiles else None
+
     def can_fire(self):
-        """True when the active side may act: no shot is flying and the game isn't over."""
-        return not self.is_over() and self.projectile is None
+        """True when the active side may act: no shell is flying and the game isn't over."""
+        return not self.is_over() and not self.projectiles
 
     # ----- acting --------------------------------------------------------------------
 
     def perform_action(self, actor_index, action):
         """The active team's character in slot `actor_index` does `action`.
 
-        action is "attack", "defend" or "special". Attack (and Archer's Power Shot)
-        fire the active cannon with its current aim; the turn ends when the shot has
-        landed. Defend, Rally and Repair end the turn at once.
+        action is "attack", "defend" or "special". Attack (and a special that fires:
+        Power Shot, Triple Volley, Airburst) fires the active cannon with its current aim; the
+        turn ends when its last shell has landed. Defend, Rally, Repair and Field Dressing end
+        the turn at once.
         Returns True if the action was carried out. If it isn't allowed, returns
         False, records an "invalid" event with the reason, and changes nothing else.
         """
@@ -315,12 +338,17 @@ class Battle:
             self._finish_turn(actor, 0)
         else:
             # Each role's use_special() does something different (polymorphism):
-            # Rally makes the team defend, Repair fixes the cover, Power Shot
-            # returns a stronger shot for the cannon to fire.
+            # Rally makes the team defend, Repair fixes the cover, Field Dressing heals,
+            # Power Shot, Triple Volley and Airburst return a shot for the cannon to fire.
             actor.start_cooldown()
+            hp_before = [character.hp for character in team.characters]
             message, shot = actor.use_special(team)
             self._events.append({"type": "special", "side": self.active_side,
                                  "name": actor.name, "message": message})
+            for character, hp in zip(team.characters, hp_before):      # M6.3: who was healed, for main.py
+                if character.hp > hp:
+                    self._events.append({"type": "heal", "side": self.active_side,
+                                         "name": character.name, "amount": character.hp - hp})
             if shot is not None:
                 self._launch(actor, shot)
             else:
@@ -356,16 +384,30 @@ class Battle:
     # ----- flight and explosions ------------------------------------------------
 
     def update(self):
-        """Advance the shot in flight by one physics step. main.py calls this once per frame."""
-        if self.projectile is None:
+        """Advance every shell in flight by one physics step. main.py calls this once per frame.
+
+        M6.3: the shells move one after another, in the order they were fired. A shell that
+        touches something explodes at once, so a later shell can already fly through a block an
+        earlier shell destroyed in this frame. A shell that touched nothing and has just started
+        to come down splits, if it is an Airburst shell. When the last shell has landed, the
+        attack is over (_end_attack).
+        """
+        if not self.projectiles:
             return
-        start = (self.projectile.x, self.projectile.y)
-        self.projectile.step()
-        impact = self._find_impact(self.projectile, *start)
-        if impact is None and self.projectile.steps >= MAX_STEPS:
-            impact = ("timeout", self.projectile.x, self.projectile.y, None)
-        if impact is not None:
-            self._end_shot(impact)
+        for shell in list(self.projectiles):        # a copy: shells are removed and added below
+            start = (shell.x, shell.y)
+            rising = shell.vy < 0
+            shell.step()
+            impact = self._find_impact(shell, *start)
+            if impact is None and shell.steps >= MAX_STEPS:
+                impact = ("timeout", shell.x, shell.y, None)
+            if impact is not None:
+                self.projectiles.remove(shell)
+                self._explode(shell, impact)
+            elif shell.split is not None and rising and shell.vy >= 0:
+                self._split(shell)
+        if not self.projectiles:
+            self._end_attack()
 
     def take_events(self):
         """Return everything that happened since the last call, and empty the list."""
@@ -388,11 +430,40 @@ class Battle:
         return self.winner
 
     def _launch(self, shooter, shot_damage):
-        """Fire the active cannon for `shooter`, the character whose stats the shot uses."""
-        self.projectile = self.cannons[self.active_side].fire()
+        """Fire the active cannon for `shooter`, the character whose stats the shot uses.
+
+        M6.3: one shell for each entry of shot_damage.spread, all leaving the muzzle together,
+        each with the cannon's aim changed by that entry and kept inside the legal limits (so near
+        a limit two shells can share a path). A splitting shot's shell is marked with its split.
+        """
+        cannon = self.cannons[self.active_side]
+        self.projectiles = []
+        for angle_change, power_change in shot_damage.spread:
+            shell = cannon.fire(angle_change, power_change)
+            shell.split = shot_damage.split
+            shell.center = (angle_change, power_change) == (0, 0)     # M6.4: fired with the aim itself
+            self.projectiles.append(shell)
         self._shooter = shooter
         self._shot_damage = shot_damage
-        self._events.append({"type": "fire", "side": self.active_side})
+        self._attack_hit = False
+        self._attack_defeats = 0
+        self._events.append({"type": "fire", "side": self.active_side, "shells": len(self.projectiles)})
+
+    def _split(self, shell):
+        """Airburst (M6.3): `shell` becomes one small shell per speed factor in shell.split, at its
+        place and in its place in the list. Each keeps its vertical speed and its flight time and
+        multiplies its horizontal speed by the factor. The marked shell itself is gone."""
+        small_shells = []
+        for factor in shell.split:
+            small = copy.copy(shell)                # the same position, speeds, side and steps
+            small.vx = shell.vx * factor
+            small.split = None                      # small shells never split again
+            small.center = shell.center and factor == 1     # M6.4: it keeps the aim's own path
+            small_shells.append(small)
+        index = self.projectiles.index(shell)
+        self.projectiles[index:index + 1] = small_shells
+        self._events.append({"type": "split", "side": shell.side, "x": shell.x, "y": shell.y,
+                             "shells": len(small_shells)})
 
     def _find_impact(self, shot, x0, y0):
         """What the shot touched first while moving from (x0, y0) to where it is now:
@@ -470,8 +541,29 @@ class Battle:
         contacts.append(("timeout", None, shot.x, shot.y))
         return contacts
 
-    def _end_shot(self, impact):
-        """Apply a finished shot's explosion (or miss), award EXP, then end the turn.
+    def preview_path(self, side, steps, every):
+        """Read-only (M6.2, Classic Aim's path dots): where a shot from `side`'s cannon, with its
+        current aim, would be after every `every` physics steps during its first `steps` steps.
+
+        It moves a new Projectile with the same step() a real shot uses and checks each move with
+        the same _touches() a real shot uses, and it stops before the first move that touches
+        anything, so no point lies past an impact. Nothing is fired: no event is recorded and
+        the cannons, teams, cover and turn are not changed.
+        """
+        shot = self.cannons[side].fire()            # a new Projectile; the Battle never sees it
+        points = []
+        for step in range(1, steps + 1):
+            x0, y0 = shot.x, shot.y
+            shot.step()
+            if self._touches(other_side(side), x0, y0, shot.x, shot.y):
+                break
+            if step % every == 0:
+                points.append((shot.x, shot.y))
+        return points
+
+    def _explode(self, shell, impact):
+        """Apply one landed shell's explosion (or miss). The attack goes on until its last shell
+        has landed (_end_attack); this only notes whether the shell hit and what it defeated.
 
         Everything the explosion depends on is read once, at the moment of impact and
         before anything is damaged: Cover Guard, which characters the blast reaches,
@@ -480,20 +572,17 @@ class Battle:
         """
         kind, x, y, target_slot = impact
         shooter, shot_damage = self._shooter, self._shot_damage
-        enemy = other_side(self.projectile.side)
+        enemy = other_side(shell.side)
         team = self.teams[enemy]
-        self.projectile = None
-        self._shooter = None
-        self._shot_damage = None
 
         if kind in ("offscreen", "timeout"):
             self._events.append({"type": "miss", "side": other_side(enemy),
-                                 "reason": kind, "x": x, "y": y})
-            self._finish_turn(shooter, 0)
+                                 "reason": kind, "x": x, "y": y, "center": shell.center})
             return
 
+        radius = BLAST_RADIUS if shot_damage.blast_radius is None else shot_damage.blast_radius
         guarded = self.castle_guarded(enemy)
-        in_blast = team.characters_near(x, y, BLAST_RADIUS)
+        in_blast = team.characters_near(x, y, radius)
         if target_slot is not None and target_slot not in in_blast:
             in_blast.append(target_slot)            # a direct hit always counts
         # A directly hit character is never shielded: the shot reached it.
@@ -502,7 +591,7 @@ class Battle:
         block_damage = shot_damage.block_damage
         if guarded:
             block_damage = block_damage * (100 - CASTLE_GUARD_PERCENT) // 100
-        blocks_hit, damage = team.castle.apply_blast(x, y, BLAST_RADIUS, block_damage)
+        blocks_hit, damage = team.castle.apply_blast(x, y, radius, block_damage)
         characters_hit = []
         for index in sorted(in_blast):
             if index in covered:
@@ -513,15 +602,23 @@ class Battle:
                                    "defeated": not target.is_alive()})
         self._events.append({
             "type": "explosion", "side": other_side(enemy), "kind": kind, "x": x, "y": y,
+            "radius": radius, "center": shell.center,
             "target": None if target_slot is None else team.characters[target_slot].name,
             "blocks_hit": blocks_hit, "damage": damage, "guarded": guarded,
             "characters_hit": characters_hit,
             "covered": [team.characters[i].name for i in sorted(covered)]})
-
-        exp = 0
         if blocks_hit > 0 or characters_hit:
-            exp += EXP_FOR_HIT
-        exp += EXP_FOR_DEFEAT * sum(1 for hit in characters_hit if hit["defeated"])
+            self._attack_hit = True
+        # A defeated character can't be hit again, so each defeat is counted once.
+        self._attack_defeats += sum(1 for hit in characters_hit if hit["defeated"])
+
+    def _end_attack(self):
+        """The last shell of the attack has landed: award its EXP once (EXP_FOR_HIT if any shell
+        hit something, plus EXP_FOR_DEFEAT per enemy defeated), then end the turn."""
+        shooter = self._shooter
+        exp = (EXP_FOR_HIT if self._attack_hit else 0) + EXP_FOR_DEFEAT * self._attack_defeats
+        self._shooter = None
+        self._shot_damage = None
         self._finish_turn(shooter, exp)
 
     # ----- turns and rounds ------------------------------------------------------

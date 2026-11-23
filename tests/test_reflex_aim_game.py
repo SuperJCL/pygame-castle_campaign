@@ -9,7 +9,7 @@ import math
 import unittest
 
 import test_main
-from test_main import FRONT_CHARACTER, finish_shot, run_to_cannon
+from test_main import FRONT_CHARACTER, battle_key, finish_shot, restart_with_r, run_to_cannon
 
 pygame = test_main.pygame
 if pygame is not None:
@@ -49,8 +49,8 @@ def record_launches(cannon):
     barrel (the Projectile itself moves on afterwards)."""
     fired, fire = [], cannon.fire
 
-    def spy():
-        shot = fire()
+    def spy(*change):                  # M6.3: Cannon.fire may change the aim (volley shells)
+        shot = fire(*change)
         fired.append((shot.vx, shot.vy))
         return shot
     cannon.fire = spy
@@ -71,7 +71,7 @@ def swing_to(game, angle):
 def set_power(game, power):
     cannon = game.battle.cannons[game.battle.active_side]
     while cannon.power != power:
-        game.handle_key(pygame.K_RIGHT if cannon.power < power else pygame.K_LEFT, 0)
+        game.handle_key(battle_key(game, "more" if cannon.power < power else "less"), 0)
 
 
 def wait_for_left(game):
@@ -136,7 +136,7 @@ class AimChoiceTest(ReflexAimTestCase):
 
     def test_the_mode_is_kept_for_a_rematch_and_can_be_switched_after_change_teams(self):
         self.start([Knight], [Archer])
-        self.game.handle_key(pygame.K_r, 0)
+        restart_with_r(self.game)
         self.assertEqual(self.game.aim_mode, "reflex")
         test_main.end_match_now(self)
         self.click(self.game.rematch_button.rect)
@@ -196,9 +196,9 @@ class CaptureTest(ReflexAimTestCase):
                 frames(self.game, wait)
                 self.game.draw()                                 # what the player sees ...
                 shown = self.left_cannon().angle
-                self.assertIn(f"Angle {shown}°", self.game.aim_text())
+                self.assertEqual(self.game.aim_values()[0], f"{shown}°")    # M6.2: was aim_text()
                 frame = self.game.swings["left"].frame
-                self.game.handle_key(pygame.K_SPACE, 0)          # ... is what SPACE locks
+                self.game.handle_key(battle_key(self.game, "fire"), 0)          # ... is what SPACE locks
                 shot = self.game.cannon_run.shot
                 self.assertEqual((shot.angle, shot.power), (shown, 50))
                 self.assertEqual(shown, expected_angle(frame))
@@ -218,7 +218,7 @@ class CaptureTest(ReflexAimTestCase):
         fired = record_launches(self.left_cannon())
         frames(self.game, 61)
         locked = self.left_cannon().angle
-        self.game.handle_key(pygame.K_SPACE, 0)
+        self.game.handle_key(battle_key(self.game, "fire"), 0)
         frame = self.game.swings["left"].frame
         run_to_cannon(self.game)                                 # 20 frames later it is fired ...
         self.assertEqual(len(fired), 1)
@@ -236,13 +236,14 @@ class CaptureTest(ReflexAimTestCase):
         set_power(self.game, 60)
         frames(self.game, 40)
         locked = self.left_cannon().angle
-        self.game.handle_key(pygame.K_SPACE, 0)
+        self.game.handle_key(battle_key(self.game, "fire"), 0)
         self.assertIn(f"Angle locked at {locked}°", self.game.message)
         self.assertIn(f"LEFT locked the angle at {locked}° (power 60).", self.game.log)
         self.game.update()
         self.assertEqual(self.game.cannon_label(self.left_cannon()), f"{locked}° / 60")   # still under the cannon
         run_to_cannon(self.game)
-        self.assertIn(f"Angle {locked}°", self.game.aim_text())   # the panel keeps it while the shot flies
+        self.assertEqual(self.game.aim_values()[0], f"{locked}°")   # the panel keeps it while the shot flies
+        self.assertEqual(self.game.aim_status(), f"REFLEX · LOCKED {locked}°")   # M6.2
 
     def test_power_shot_also_locks_the_swinging_angle(self):
         self.start([Archer], [Knight])
@@ -257,21 +258,21 @@ class PowerAndKeysTest(ReflexAimTestCase):
         self.start([Knight], [Archer])
         cannon, shift = self.left_cannon(), test_main.SHIFT
         angles = []
-        for key, mods in ((pygame.K_RIGHT, 0), (pygame.K_RIGHT, shift), (pygame.K_LEFT, 0), (pygame.K_RIGHT, 0)):
-            self.game.handle_key(key, mods)
+        for name, mods in (("more", 0), ("more", shift), ("less", 0), ("more", 0)):   # the team's power keys
+            self.game.handle_key(battle_key(self.game, name), mods)
             angles.append(cannon.angle)
             frames(self.game, 10)
         self.assertEqual(cannon.power, 50 + 1 + 5 - 1 + 1)
         self.assertEqual(len(set(angles)), 4)                    # the swing went on meanwhile
-        self.game.handle_key(pygame.K_SPACE, 0)
+        self.game.handle_key(battle_key(self.game, "fire"), 0)
         self.assertEqual(self.game.cannon_run.shot.power, 56)
 
     def test_up_and_down_do_not_move_the_swinging_barrel_and_say_why(self):
         self.start([Knight], [Archer])
         frames(self.game, 20)
         angle = self.left_cannon().angle
-        for key, mods in ((pygame.K_UP, 0), (pygame.K_DOWN, test_main.SHIFT)):
-            self.game.handle_key(key, mods)
+        for name, mods in (("up", 0), ("down", test_main.SHIFT)):     # the team's angle keys
+            self.game.handle_key(battle_key(self.game, name), mods)
             self.assertEqual(self.left_cannon().angle, angle)
         self.assertIn("swings by itself", self.game.message)
 
@@ -284,8 +285,8 @@ class TwoPlayerReflexTest(ReflexAimTestCase):
         frames(self.game, 33)
         left_locked = self.left_cannon().angle
         left_frame = self.game.swings["left"].frame
-        self.game.handle_key(pygame.K_SPACE, 0)
-        self.game.handle_event(pygame.event.Event(pygame.KEYUP, key=pygame.K_SPACE))   # let go of SPACE
+        self.game.handle_key(battle_key(self.game, "fire"), 0)
+        self.game.handle_event(pygame.event.Event(pygame.KEYUP, key=battle_key(self.game, "fire")))   # let go of SPACE
         finish_shot(self.game)
         self.assertEqual(battle.active_side, "right")
         right_angles = []
@@ -296,7 +297,7 @@ class TwoPlayerReflexTest(ReflexAimTestCase):
         self.assertEqual(right_angles[0], expected_angle(1))
         self.assertGreater(len(set(right_angles)), 30)
         right_locked = battle.cannons["right"].angle
-        self.game.handle_key(pygame.K_SPACE, 0)
+        self.game.handle_key(battle_key(self.game, "fire"), 0)
         self.assertEqual(self.game.cannon_run.shot.side, "right")
         run_to_cannon(self.game)
         vx, vy = fired["right"][0]
@@ -317,8 +318,8 @@ class TwoPlayerReflexTest(ReflexAimTestCase):
                 break
             set_power(self.game, FRONT_CHARACTER[1])
             swing_to(self.game, FRONT_CHARACTER[0])
-            self.game.handle_event(pygame.event.Event(pygame.KEYUP, key=pygame.K_SPACE))
-            self.game.handle_key(pygame.K_SPACE, 0)
+            self.game.handle_event(pygame.event.Event(pygame.KEYUP, key=battle_key(self.game, "fire")))
+            self.game.handle_key(battle_key(self.game, "fire"), 0)
             finish_shot(self.game)
         self.assertEqual((self.game.state, self.game.battle.winner), ("result", "left"))
 
@@ -327,7 +328,7 @@ class LockTest(ReflexAimTestCase):
     def test_the_swing_stops_while_the_controls_are_locked(self):
         self.start([Knight], [Archer])
         frames(self.game, 52)
-        self.game.handle_key(pygame.K_SPACE, 0)
+        self.game.handle_key(battle_key(self.game, "fire"), 0)
         cannon, swing = self.left_cannon(), self.game.swings["left"]
         locked = (cannon.angle, swing.frame)
         phases = set()
@@ -355,7 +356,7 @@ class RematchTest(ReflexAimTestCase):
     def test_r_restarts_both_swings_and_right_moves_first(self):
         self.start([Knight], [Archer])
         frames(self.game, 70)
-        self.game.handle_key(pygame.K_r, 0)
+        restart_with_r(self.game)
         battle = self.game.battle
         self.assertEqual((battle.first_side, battle.active_side), ("right", "right"))
         self.assertEqual([self.game.swings[s].frame for s in ("left", "right")], [0, 0])
@@ -368,9 +369,9 @@ class RematchTest(ReflexAimTestCase):
         self.start([Knight], [Archer])
         events = record_events(self.game)
         frames(self.game, 40)
-        self.game.handle_key(pygame.K_SPACE, 0)
+        self.game.handle_key(battle_key(self.game, "fire"), 0)
         frames(self.game, 5)
-        self.game.handle_key(pygame.K_r, 0)
+        restart_with_r(self.game)
         frames(self.game, 60)
         self.assertFalse(any(e["type"] in ("action", "fire") for e in events))
         self.assertTrue(self.game.aim_swings())                  # the new match swings again
@@ -438,17 +439,18 @@ class ClassicAimRegressionTest(ReflexAimTestCase):
         self.assertEqual((cannon.angle, cannon.power), (45, 50))
         self.assertEqual([self.game.swings[s].frame for s in ("left", "right")], [0, 0])
         self.assertFalse(self.game.aim_swings())
-        self.game.handle_key(pygame.K_UP, 0)
-        self.game.handle_key(pygame.K_DOWN, test_main.SHIFT)
+        self.game.handle_key(battle_key(self.game, "up"), 0)
+        self.game.handle_key(battle_key(self.game, "down"), test_main.SHIFT)
         self.assertEqual(cannon.angle, 41)
 
     def test_classic_texts_are_unchanged(self):
         self.start([Knight], [Archer], aim="classic")
         self.assertEqual(self.game.message, "LEFT team moves first. Choose a character, aim, then choose an action.")
-        self.assertEqual(self.game.action_hint_lines()[-1], "ATTACK (or SPACE) fires with this aim. Arrows aim.")
+        self.assertIn("drag", self.game.aim_labels()[1])          # M6.2: the power label names the slider
+        self.assertEqual(self.game.aim_labels()[0], "ANGLE · W/S")     # two players: LEFT's keys (M6.2 rework)
         self.assertTrue(self.game.hud_turn_text().endswith("aim and act"))
         test_main.aim(self.game, 50, 60)
-        self.game.handle_key(pygame.K_SPACE, 0)
+        self.game.handle_key(battle_key(self.game, "fire"), 0)
         self.assertEqual(self.game.message, "LEFT Knight runs to the cannon...")
         self.assertFalse(any("locked" in line for line in self.game.log))
         self.assertEqual((self.game.cannon_run.shot.angle, self.game.cannon_run.shot.power), (50, 60))
@@ -465,7 +467,7 @@ class SameRulesTest(ReflexAimTestCase):
         else:
             test_main.aim(self.game, 45, 83)
         events = record_events(self.game)
-        self.game.handle_key(pygame.K_SPACE, 0)
+        self.game.handle_key(battle_key(self.game, "fire"), 0)
         finish_shot(self.game)
         battle = self.game.battle
         state = {
@@ -488,12 +490,13 @@ class SameRulesTest(ReflexAimTestCase):
 class ReflexInterfaceTest(ReflexAimTestCase):
     def test_the_panel_and_banner_explain_the_timing(self):
         self.start([Knight], [Archer])
-        self.assertIn("ATTACK or SPACE", self.game.message)
+        self.assertIn("ATTACK or F", self.game.message)               # two players: LEFT fires with F
         self.assertIn("lock", self.game.message)
-        self.assertIn("locks the swinging angle", self.game.action_hint_lines()[-1])
+        self.assertIn("locks the swinging angle", self.game.action_help("attack"))   # M6.2: ATTACK's help
         self.assertTrue(self.game.hud_turn_text().endswith("time your shot"))
 
     def test_the_hints_fit_the_panel_for_every_role(self):
+        # M6.2: every action's one help line fits two rows of HINT_WIDTH.
         self.start([Knight, Archer, Engineer], [Knight, Archer, Engineer])
         for index in range(3):
             for blocked in (False, True):
@@ -502,10 +505,9 @@ class ReflexInterfaceTest(ReflexAimTestCase):
                     if blocked:
                         character.start_cooldown()
                     self.game.select_actor(index)
-                    hints = []
-                    for line in self.game.action_hint_lines():
-                        hints.extend(main.wrap_text(line, self.game.tiny_font, 390))
-                    self.assertLessEqual(main.PANEL_TOP + 84 + 18 * len(hints), main.WINDOW_HEIGHT, hints)
+                    for action in ("attack", "defend", "special"):
+                        hints = main.wrap_text(self.game.action_help(action), self.game.tiny_font, main.HINT_WIDTH)
+                        self.assertLessEqual(len(hints), 2, hints)
 
     def test_the_swing_range_is_drawn_only_in_reflex_aim(self):
         x, y = CANNON_PIVOT["left"]
@@ -515,8 +517,8 @@ class ReflexInterfaceTest(ReflexAimTestCase):
             with self.subTest(aim=aim):
                 self.game = main.Game(self.screen)
                 self.start([Knight], [Archer], aim=aim)
-                self.game.handle_key(pygame.K_r, 0)
-                self.game.handle_key(pygame.K_r, 0)              # LEFT first again, barrel at 20 (or 45)
+                restart_with_r(self.game)
+                restart_with_r(self.game)              # LEFT first again, barrel at 20 (or 45)
                 self.game.draw()
                 pixel = tuple(self.screen.get_at(far))[:3]
                 self.assertEqual(pixel == main.AIM_COLOR, marked)
@@ -525,7 +527,7 @@ class ReflexInterfaceTest(ReflexAimTestCase):
         self.start([Knight], [Archer])
         frames(self.game, 15)
         self.game.draw()
-        self.game.handle_key(pygame.K_SPACE, 0)
+        self.game.handle_key(battle_key(self.game, "fire"), 0)
         for _ in range(400):
             self.game.update()
             self.game.draw()

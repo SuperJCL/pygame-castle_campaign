@@ -1,0 +1,75 @@
+---
+config:
+  theme: base
+  fontFamily: '"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif'
+  htmlLabels: false
+  flowchart:
+    htmlLabels: false
+    wrappingWidth: 480
+    curve: basis
+    nodeSpacing: 36
+    rankSpacing: 44
+    padding: 16
+  themeVariables:
+    fontFamily: '"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif'
+    fontSize: 24px
+    lineColor: "#455A64"
+    edgeLabelBackground: "#FFFFFF"
+---
+%% Castle Siege 一次开火流程图（课堂投屏）。三段：① 角度何时锁定 ② 炮弹何时发射 ③ 为什么只结算一次。
+%% 节点颜色沿用架构图：蓝 = 界面（main.py / animation.py），紫 = AI，橙 = 战斗规则（battle.py）。
+%% 红框 = 讲解重点：角度锁定、炮弹发射、只结算一次。每个节点先写发生了什么，最后一行写代码位置。
+%% PendingShot 的类定义在 animation.py，由 main.py（界面）创建和使用。
+%% 文字里带下划线的名字只放在最后一行：SVG 文字行距小，下划线会贴到下一行中文。
+%% 核对依据见 talk_notes.md 的「源码出处」。
+flowchart LR
+    subgraph LOCK["① 角度何时锁定"]
+        direction LR
+        CL["Classic<br/>按下 ATTACK / 技能那一刻<br/>记下当前角度和火力"]
+        RF["Reflex<br/>按下那一刻<br/>锁住正在摆动的角度"]
+        AIS["AI · 第 40 帧<br/>选出射击方案<br/>炮口立刻转到计划角度<br/>ai.py · choose()"]
+        PS["角度、火力、角色、动作<br/>一起记下，之后不再改变<br/>animation.py · PendingShot"]
+        CL --> PS
+        RF --> PS
+        AIS --> PS
+    end
+
+    subgraph FIRE["② 炮弹何时发射"]
+        direction TB
+        RUN["角色跑向炮台 20 帧<br/>跑动期间不能重新瞄准或出招<br/>animation.py · CannonRun"]
+        GO["按记下的角度和火力出招<br/>Battle.perform_action()"]
+        LA["到达炮台才发射<br/>普通 1 枚｜齐射同时发 3 枚<br/>空爆先发 1 枚，到顶点再分成 5 枚<br/>battle.py · _launch()"]
+        RUN --> GO --> LA
+    end
+
+    subgraph SETTLE["③ 只结算一次"]
+        direction TB
+        UP["每帧逐枚推进炮弹<br/>命中即移出列表、当场伤害<br/>battle.py · update()"]
+        Q{"炮弹列表<br/>空了吗？"}
+        SUM["整次攻击的经验只算一份<br/>battle.py · _end_attack()"]
+        FIN["发经验 → 判胜负<br/>→ 结束对局或换回合<br/>battle.py · _finish_turn()"]
+        UP --> Q
+        Q -->|"否：下一帧"| UP
+        Q -->|"是：只有这一帧"| SUM --> FIN
+    end
+
+    LOCK ==> FIRE ==> SETTLE
+
+    classDef ui fill:#E3F0FF,stroke:#2F6DB5,stroke-width:2px,color:#0D2440
+    classDef ai fill:#F1E8FF,stroke:#7A4BC2,stroke-width:2px,color:#2A1450
+    classDef rules fill:#FFF0DC,stroke:#C46A00,stroke-width:2px,color:#3E2100
+    classDef ask fill:#FFFFFF,stroke:#C46A00,stroke-width:3px,color:#3E2100
+    classDef keyui fill:#E3F0FF,stroke:#C62828,stroke-width:4px,color:#0D2440
+    classDef keyrules fill:#FFF0DC,stroke:#C62828,stroke-width:4px,color:#3E2100
+    class CL,RF,RUN,GO ui
+    class AIS ai
+    class UP,FIN rules
+    class Q ask
+    class PS keyui
+    class LA,SUM keyrules
+
+    style LOCK fill:#FBFCFF,stroke:#90A4AE,stroke-width:2px,color:#263238
+    style FIRE fill:#FBFCFF,stroke:#90A4AE,stroke-width:2px,color:#263238
+    style SETTLE fill:#FFFCF7,stroke:#90A4AE,stroke-width:2px,color:#263238
+
+    linkStyle 9,10 stroke:#1F3A5F,stroke-width:4px

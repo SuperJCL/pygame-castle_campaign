@@ -1,0 +1,85 @@
+---
+config:
+  theme: base
+  fontFamily: '"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif'
+  htmlLabels: false
+  flowchart:
+    htmlLabels: false
+    wrappingWidth: 480
+    curve: basis
+    nodeSpacing: 56
+    rankSpacing: 56
+    padding: 16
+    subGraphTitleMargin:
+      top: 6
+      bottom: 14
+  themeVariables:
+    fontFamily: '"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif'
+    fontSize: 26px
+    lineColor: "#455A64"
+    edgeLabelBackground: "#FFFFFF"
+---
+%% Castle Siege 代码架构图（课堂投屏）。四区：界面 / 战斗规则 / AI / 绘制。
+%% 粗深蓝线 = 主线：输入 → 界面 → 规则 → 事件回到界面。紫色粗线 = AI 正式出招，走同一个 perform_action()。
+%% 灰色细虚线 = AI 直接用到的角色与掩体模块。战斗规则区和 AI 区的模块都不 import pygame。
+%% 排版说明：
+%%   - 带下划线的名字只放在最后一行或英文行上方：SVG 文字行距小，下划线会贴到下一行中文。
+%%   - 边标签只放短中文：Mermaid 约 200px 就把边标签折行；perform_action() 写在 battle.py 节点里。
+%% 核对依据见 talk_notes.md 的「源码出处」。
+flowchart LR
+    IN(["鼠标 / 键盘"])
+
+    subgraph UI["界面"]
+        MAIN["main.py · Game<br/>读输入、每帧推进<br/>菜单、暂停、开火时机"]
+        HELP["setup_choices.py<br/>battle_feedback.py<br/>reflex_aim.py<br/>animation.py<br/>选队 · 战报 · 摆动 · 跑动"]
+    end
+
+    subgraph RULES["战斗规则"]
+        BATTLE["battle.py · Battle<br/>回合、发射、碰撞<br/>伤害、经验、胜负<br/>统一入口 perform_action()"]
+        CHAR["characters.py<br/>六职业的属性与技能"]
+        CASTLE["castle.py<br/>掩体布防、HP、维修"]
+    end
+
+    subgraph AIZONE["AI"]
+        AI["ai.py · AIController<br/>轮到电脑时<br/>试招、打分、选一招"]
+        COPY["Battle 副本<br/>deepcopy，只试不改"]
+    end
+
+    subgraph DRAW["绘制"]
+        PAINT["drawing.py · sound.py<br/>画面、特效、音效"]
+    end
+
+    IN ==> MAIN
+    MAIN ==>|"① 出招"| BATTLE
+    BATTLE ==>|"② 事件"| MAIN
+    MAIN ==>|"③ 画出来"| PAINT
+    MAIN --- HELP
+    BATTLE --> CHAR
+    BATTLE --> CASTLE
+    MAIN --> AI
+    COPY <-->|"副本试招"| AI
+    AI ==>|"正式出招"| BATTLE
+    AI -.-> CHAR
+    AI -.-> CASTLE
+
+    classDef input fill:#FFFFFF,stroke:#263238,stroke-width:2px,color:#263238
+    classDef ui fill:#E3F0FF,stroke:#2F6DB5,stroke-width:2px,color:#0D2440
+    classDef rules fill:#FFF0DC,stroke:#C46A00,stroke-width:2px,color:#3E2100
+    classDef ai fill:#F1E8FF,stroke:#7A4BC2,stroke-width:2px,color:#2A1450
+    classDef copy fill:#FFFFFF,stroke:#7A4BC2,stroke-width:2px,stroke-dasharray:6 4,color:#2A1450
+    classDef draw fill:#E2F4EF,stroke:#2E8B6F,stroke-width:2px,color:#0F3A2D
+    class IN input
+    class MAIN,HELP ui
+    class BATTLE,CHAR,CASTLE rules
+    class AI ai
+    class COPY copy
+    class PAINT draw
+
+    style UI fill:#F5F9FF,stroke:#2F6DB5,stroke-width:2px,color:#2F6DB5
+    style RULES fill:#FFF9F0,stroke:#C46A00,stroke-width:2px,color:#C46A00
+    style AIZONE fill:#FAF6FF,stroke:#7A4BC2,stroke-width:2px,color:#7A4BC2
+    style DRAW fill:#F3FBF8,stroke:#2E8B6F,stroke-width:2px,color:#2E8B6F
+
+    linkStyle 0,1,2,3 stroke:#1F3A5F,stroke-width:4px
+    linkStyle 9 stroke:#7A4BC2,stroke-width:4px
+    linkStyle 10,11 stroke:#9E9E9E,stroke-width:1.2px
